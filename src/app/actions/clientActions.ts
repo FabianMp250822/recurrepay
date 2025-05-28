@@ -7,7 +7,7 @@ import nodemailer from 'nodemailer';
 import { clientSchema } from '@/lib/schema';
 import * as store from '@/lib/store';
 import type { Client, ClientFormData, PaymentRecord } from '@/types';
-import { formatCurrency, formatDate, calculateNextPaymentDate as calculateNextRegPaymentDateUtil } from '@/lib/utils';
+import { formatCurrency, formatDate, calculateNextPaymentDate as calculateNextRegPaymentDateUtil, getDaysUntilDue } from '@/lib/utils';
 import { IVA_RATE, FINANCING_OPTIONS } from '@/lib/constants';
 import { addMonths, setDate, getDate, getDaysInMonth } from 'date-fns';
 
@@ -149,8 +149,6 @@ export async function updateClientAction(id: string, formData: ClientFormData) {
 }
 
 export async function deleteClientAction(id: string) {
-  // TODO: Consider deleting associated files from Firebase Storage
-  // TODO: Consider deleting paymentHistory subcollection
   const result = await store.deleteClient(id);
   if (result.error) {
     return { success: false, error: result.error };
@@ -180,7 +178,6 @@ export async function registerPaymentAction(clientId: string) {
   const paymentRecord: Omit<PaymentRecord, 'id' | 'recordedAt'> = {
     paymentDate: paymentDate,
     amountPaid: paymentAmountRecorded,
-    // paymentMethod: client.paymentMethod, // Or a new field for this specific payment
   };
 
   const historyResult = await store.addPaymentToHistory(clientId, paymentRecord);
@@ -192,7 +189,6 @@ export async function registerPaymentAction(clientId: string) {
   let newNextPaymentDate = new Date(client.nextPaymentDate);
   newNextPaymentDate = addMonths(newNextPaymentDate, 1);
   
-  // Adjust day if new month has fewer days
   const targetDay = client.paymentDayOfMonth;
   const daysInNewMonth = getDaysInMonth(newNextPaymentDate);
   newNextPaymentDate = setDate(newNextPaymentDate, Math.min(targetDay, daysInNewMonth));
@@ -205,13 +201,10 @@ export async function registerPaymentAction(clientId: string) {
   if (client.financingPlan && client.financingPlan > 0 && newPaymentsMadeCount >= client.financingPlan) {
     updates.paymentAmount = 0;
     updates.status = 'completed';
-    // Optional: Clear nextPaymentDate or set to a far future date if contract is fully paid
-    // updates.nextPaymentDate = undefined; // Or some indicator
   }
 
   const updateResult = await store.updateClient(clientId, updates);
   if (updateResult.error) {
-    // Potentially rollback payment history record or log inconsistency
     return { success: false, error: `Error al actualizar cliente: ${updateResult.error}` };
   }
 
@@ -250,7 +243,25 @@ export async function sendPaymentReminderEmailAction(client: Client) {
   });
   
   const paymentAmountText = client.paymentAmount > 0 ? `su pago de <strong>${formatCurrency(client.paymentAmount)}</strong>` : "su próximo compromiso de pago";
-  const subject = client.paymentAmount > 0 ? `Recordatorio de Pago - ${formatCurrency(client.paymentAmount)}` : `Recordatorio Importante`;
+  
+  let subject = "Recordatorio Importante - RecurPay";
+  const daysUntilDue = getDaysUntilDue(client.nextPaymentDate);
+
+  if (client.paymentAmount > 0) {
+    if (daysUntilDue < -5) {
+      subject = `URGENTE: Pago VENCIDO para ${client.firstName} - ${formatCurrency(client.paymentAmount)}`;
+    } else if (daysUntilDue < 0) {
+      subject = `AVISO: Tu pago para ${client.firstName} de ${formatCurrency(client.paymentAmount)} está VENCIDO`;
+    } else if (daysUntilDue === 0) {
+      subject = `¡Importante! Tu pago de ${formatCurrency(client.paymentAmount)} para ${client.firstName} vence HOY`;
+    } else if (daysUntilDue === 1) {
+      subject = `¡Atención! Tu pago de ${formatCurrency(client.paymentAmount)} para ${client.firstName} vence MAÑANA`;
+    } else if (daysUntilDue <= 7) {
+      subject = `Recordatorio: Tu pago de ${formatCurrency(client.paymentAmount)} para ${client.firstName} vence pronto`;
+    } else {
+      subject = `Recordatorio Amistoso: Próximo Pago - RecurPay`;
+    }
+  }
 
 
   const mailOptions = {
@@ -312,3 +323,4 @@ export async function sendPaymentReminderEmailAction(client: Client) {
   }
 }
 
+    
