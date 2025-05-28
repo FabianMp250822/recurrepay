@@ -26,18 +26,16 @@ export default function LoginPage() {
   }, [user, isAdmin, router, initialLoadComplete]);
   
    useEffect(() => {
-    // Clear error when component mounts or email/password changes, to avoid stale errors
     setAuthError(null);
   }, [setAuthError]);
 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setAuthError(null); // Clear previous errors
+    setAuthError(null); 
     await login(email, password);
   };
   
-  // If still checking auth or already logged in and admin, show loading or nothing (will redirect)
   if (!initialLoadComplete || (user && isAdmin)) {
      return (
       <div className="flex items-center justify-center min-h-screen bg-background">
@@ -54,19 +52,19 @@ export default function LoginPage() {
             <CreditCard className="h-10 w-10 text-primary" />
           </div>
           <CardTitle className="text-3xl font-bold">RecurPay</CardTitle>
-          <CardDescription>Administrator Login</CardDescription>
+          <CardDescription>Inicio de Sesión de Administrador</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
             {authError && (
               <Alert variant="destructive">
                 <Terminal className="h-4 w-4" />
-                <AlertTitle>Login Error</AlertTitle>
+                <AlertTitle>Error de Inicio de Sesión</AlertTitle>
                 <AlertDescription>{authError}</AlertDescription>
               </Alert>
             )}
             <div className="space-y-2">
-              <Label htmlFor="email">Email Address</Label>
+              <Label htmlFor="email">Correo Electrónico</Label>
               <Input
                 id="email"
                 type="email"
@@ -78,7 +76,7 @@ export default function LoginPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password">Contraseña</Label>
               <Input
                 id="password"
                 type="password"
@@ -90,7 +88,7 @@ export default function LoginPage() {
               />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : 'Login'}
+              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : 'Iniciar Sesión'}
             </Button>
           </form>
         </CardContent>

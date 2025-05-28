@@ -4,7 +4,7 @@ import { Open_Sans } from 'next/font/google';
 import './globals.css';
 import { Toaster } from '@/components/ui/toaster';
 import AppProviders from '@/components/layout/app-providers';
-import { AuthProvider } from '@/contexts/AuthContext'; // Import AuthProvider
+import { AuthProvider } from '@/contexts/AuthContext';
 
 const openSans = Open_Sans({
   subsets: ['latin'],
@@ -12,10 +12,10 @@ const openSans = Open_Sans({
 });
 
 export const metadata: Metadata = {
-  title: 'RecurPay - Smart Recurring Payments',
-  description: 'Manage your clients and automate recurring payments with RecurPay.',
+  title: 'RecurPay - Pagos Recurrentes Inteligentes',
+  description: 'Gestione sus clientes y automatice los pagos recurrentes con RecurPay.',
   icons: {
-    icon: '/favicon.ico', // Placeholder, actual favicon not generated
+    icon: '/favicon.ico', 
   },
 };
 
@@ -25,9 +25,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="es" suppressHydrationWarning> {/* Changed lang to "es" */}
       <body className={`${openSans.variable} font-sans antialiased`}>
-        <AuthProvider> {/* Wrap AppProviders (and thus children) with AuthProvider */}
+        <AuthProvider>
           <AppProviders>
             {children}
             <Toaster />

@@ -1,5 +1,6 @@
+
 import Link from 'next/link';
-import { PlusCircle, Edit3, UsersIcon as Users } from 'lucide-react'; // Changed UsersIcon import alias
+import { PlusCircle, Edit3, UsersIcon as Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Table,
@@ -22,7 +23,7 @@ import AppLayout from '@/components/layout/app-layout';
 import { getClients } from '@/lib/store';
 import { formatDate, formatCurrency, getDaysUntilDue } from '@/lib/utils';
 import DeleteClientDialog from '@/components/clients/delete-client-dialog';
-import SendReminderButton from '@/components/clients/SendReminderButton'; // New Import
+import SendReminderButton from '@/components/clients/SendReminderButton';
 import type { Client } from '@/types';
 import {
   Tooltip,
@@ -38,16 +39,15 @@ export default async function DashboardPage() {
   function getPaymentStatusBadge(nextPaymentDate: string): React.ReactElement {
     const daysUntil = getDaysUntilDue(nextPaymentDate);
     if (daysUntil < 0) {
-      return <Badge variant="destructive">Overdue</Badge>;
+      return <Badge variant="destructive">Vencido</Badge>;
     }
     if (daysUntil <= 3) {
-      // Using a Tailwind class directly for yellow as an example, though theme customization is preferred
-      return <Badge className="bg-yellow-500 text-black hover:bg-yellow-600 dark:bg-yellow-600 dark:text-white dark:hover:bg-yellow-700">Due Soon</Badge>;
+      return <Badge className="bg-yellow-500 text-black hover:bg-yellow-600 dark:bg-yellow-600 dark:text-white dark:hover:bg-yellow-700">Vence Pronto</Badge>;
     }
     if (daysUntil <= 7) {
-      return <Badge variant="secondary">Upcoming</Badge>;
+      return <Badge variant="secondary">Próximo</Badge>;
     }
-    return <Badge variant="outline">Scheduled</Badge>;
+    return <Badge variant="outline">Programado</Badge>;
   }
 
 
@@ -55,32 +55,32 @@ export default async function DashboardPage() {
     <AppLayout>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-semibold">Client Management</h1>
-          <p className="text-muted-foreground">View, manage, and add new clients.</p>
+          <h1 className="text-2xl font-semibold">Gestión de Clientes</h1>
+          <p className="text-muted-foreground">Ver, administrar y agregar nuevos clientes.</p>
         </div>
         <Button asChild>
           <Link href="/clients/new">
-            <PlusCircle className="mr-2 h-4 w-4" /> Add New Client
+            <PlusCircle className="mr-2 h-4 w-4" /> Agregar Nuevo Cliente
           </Link>
         </Button>
       </div>
       <Card>
         <CardHeader>
-          <CardTitle>Client List</CardTitle>
+          <CardTitle>Lista de Clientes</CardTitle>
           <CardDescription>
-            A list of all registered clients and their payment information.
+            Una lista de todos los clientes registrados y su información de pago.
           </CardDescription>
         </CardHeader>
         <CardContent>
           {clients.length === 0 ? (
             <div className="text-center py-10">
               <Users className="mx-auto h-12 w-12 text-muted-foreground" />
-              <h3 className="mt-2 text-sm font-medium text-foreground">No clients found</h3>
-              <p className="mt-1 text-sm text-muted-foreground">Get started by adding a new client.</p>
+              <h3 className="mt-2 text-sm font-medium text-foreground">No se encontraron clientes</h3>
+              <p className="mt-1 text-sm text-muted-foreground">Comience agregando un nuevo cliente.</p>
               <div className="mt-6">
                 <Button asChild>
                   <Link href="/clients/new">
-                    <PlusCircle className="mr-2 h-4 w-4" /> Add New Client
+                    <PlusCircle className="mr-2 h-4 w-4" /> Agregar Nuevo Cliente
                   </Link>
                 </Button>
               </div>
@@ -89,13 +89,13 @@ export default async function DashboardPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Full Name</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead className="hidden md:table-cell">Phone</TableHead>
-                <TableHead className="text-right">Amount</TableHead>
-                <TableHead className="hidden sm:table-cell">Next Payment</TableHead>
-                <TableHead className="hidden sm:table-cell text-center">Status</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead>Nombre Completo</TableHead>
+                <TableHead>Correo Electrónico</TableHead>
+                <TableHead className="hidden md:table-cell">Teléfono</TableHead>
+                <TableHead className="text-right">Monto</TableHead>
+                <TableHead className="hidden sm:table-cell">Próximo Pago</TableHead>
+                <TableHead className="hidden sm:table-cell text-center">Estado</TableHead>
+                <TableHead className="text-right">Acciones</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -119,12 +119,12 @@ export default async function DashboardPage() {
                             <Button variant="outline" size="icon" asChild>
                               <Link href={`/clients/${client.id}/edit`}>
                                 <Edit3 className="h-4 w-4" />
-                                 <span className="sr-only">Edit Client</span>
+                                 <span className="sr-only">Editar Cliente</span>
                               </Link>
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent>
-                            <p>Edit Client</p>
+                            <p>Editar Cliente</p>
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
@@ -140,7 +140,7 @@ export default async function DashboardPage() {
         </CardContent>
          {clients.length > 0 && (
           <CardFooter className="text-xs text-muted-foreground">
-            Showing <strong>{clients.length}</strong> client(s).
+            Mostrando <strong>{clients.length}</strong> cliente(s).
           </CardFooter>
         )}
       </Card>
@@ -148,8 +148,6 @@ export default async function DashboardPage() {
   );
 }
 
-// Keeping UsersIcon component as it was used after an alias change.
-// If not UsersIcon, it might be another one (e.g. Users from lucide). Let's assume Users from lucide-react.
 function UsersIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg

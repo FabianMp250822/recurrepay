@@ -6,7 +6,7 @@ import { signOut, onAuthStateChanged, signInWithEmailAndPassword } from 'firebas
 import { doc, getDoc } from 'firebase/firestore';
 import { useRouter, usePathname } from 'next/navigation';
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { auth, db } from '@/lib/firebase'; // Ensure db is exported from firebase.ts
+import { auth, db } from '@/lib/firebase'; 
 import { Loader2 } from 'lucide-react';
 
 interface AuthContextType {
@@ -37,7 +37,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setAuthError(null);
       if (firebaseUser) {
         setUser(firebaseUser);
-        // Check admin status
         try {
           const adminDocRef = doc(db, "administradores", firebaseUser.uid);
           const adminDocSnap = await getDoc(adminDocRef);
@@ -48,19 +47,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
           } else {
             setIsAdmin(false);
-            await signOut(auth); // Sign out if not an active admin
+            await signOut(auth); 
             setUser(null);
-            setAuthError("Access denied. You are not an authorized administrator.");
+            setAuthError("Acceso denegado. No es un administrador autorizado.");
             if (pathname !== '/login') {
                  router.replace('/login');
             }
           }
         } catch (error) {
-          console.error("Error checking admin status:", error);
+          console.error("Error al verificar estado de administrador:", error);
           setIsAdmin(false);
           await signOut(auth);
           setUser(null);
-          setAuthError("Error verifying administrator privileges.");
+          setAuthError("Error al verificar privilegios de administrador.");
           if (pathname !== '/login') {
             router.replace('/login');
           }
@@ -84,21 +83,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAuthError(null);
     try {
       await signInWithEmailAndPassword(auth, email, pass);
-      // onAuthStateChanged will handle admin check and navigation
     } catch (error: any) {
-      console.error("Login error:", error);
-      let message = "Login failed. Please check your credentials.";
+      console.error("Error de inicio de sesión:", error);
+      let message = "Error al iniciar sesión. Por favor, verifique sus credenciales.";
       if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-        message = "Invalid email or password.";
+        message = "Correo electrónico o contraseña inválidos.";
       } else if (error.code === 'auth/too-many-requests') {
-        message = "Access to this account has been temporarily disabled due to many failed login attempts. You can immediately restore it by resetting your password or you can try again later.";
+        message = "El acceso a esta cuenta ha sido deshabilitado temporalmente debido a muchos intentos fallidos de inicio de sesión. Puede restaurarlo inmediatamente restableciendo su contraseña o puede intentarlo de nuevo más tarde.";
       }
       setAuthError(message);
       setUser(null);
       setIsAdmin(false);
       setLoading(false);
     }
-    // setLoading(false) will be handled by onAuthStateChanged's final setLoading(false)
   };
 
   const logout = async () => {
@@ -110,8 +107,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setIsAdmin(false);
       router.replace('/login');
     } catch (error) {
-      console.error("Logout error:", error);
-      setAuthError("Logout failed. Please try again.");
+      console.error("Error al cerrar sesión:", error);
+      setAuthError("Error al cerrar sesión. Por favor, inténtelo de nuevo.");
     } finally {
       setLoading(false);
     }
@@ -136,7 +133,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 export const useAuth = (): AuthContextType => {
   const context = useContext(AuthContext);
   if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
+    throw new Error('useAuth debe ser usado dentro de un AuthProvider');
   }
   return context;
 };

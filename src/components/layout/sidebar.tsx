@@ -10,8 +10,8 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/contexts/AuthContext';
 
 const navItems = [
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/clients/new', label: 'Add Client', icon: Users },
+  { href: '/dashboard', label: 'Panel Principal', icon: LayoutDashboard },
+  { href: '/clients/new', label: 'Agregar Cliente', icon: Users },
 ];
 
 export function AppSidebar() {
@@ -19,8 +19,6 @@ export function AppSidebar() {
   const { user, isAdmin, logout, loading, initialLoadComplete } = useAuth();
 
   if (!initialLoadComplete || !isAdmin || !user) {
-    // If still loading, or not admin, or no user, don't render sidebar.
-    // AuthProvider and middleware handle redirects, this is a display check.
     return null; 
   }
 
@@ -55,17 +53,17 @@ export function AppSidebar() {
       <div className="mt-auto p-4 border-t border-sidebar-border">
         <div className="flex items-center gap-3">
           <Avatar className="h-9 w-9">
-            <AvatarImage src="https://placehold.co/40x40.png" alt="User Avatar" data-ai-hint="user avatar" />
+            <AvatarImage src="https://placehold.co/40x40.png" alt="Avatar de Usuario" data-ai-hint="user avatar" />
             <AvatarFallback>{user.email ? user.email.substring(0,2).toUpperCase() : 'AD'}</AvatarFallback>
           </Avatar>
           <div>
-            <p className="text-sm font-medium truncate" title={user.email || 'Admin User'}>{user.email || 'Admin User'}</p>
-            <p className="text-xs text-muted-foreground">Administrator</p>
+            <p className="text-sm font-medium truncate" title={user.email || 'Usuario Administrador'}>{user.email || 'Usuario Administrador'}</p>
+            <p className="text-xs text-muted-foreground">Administrador</p>
           </div>
         </div>
         <Button variant="ghost" className="w-full justify-start mt-3 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" onClick={logout}>
           <LogOut className="mr-3 h-5 w-5" />
-          Logout
+          Cerrar Sesión
         </Button>
       </div>
     </aside>

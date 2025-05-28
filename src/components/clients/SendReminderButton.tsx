@@ -27,22 +27,22 @@ export default function SendReminderButton({ client }: SendReminderButtonProps) 
       const result = await sendPaymentReminderEmailAction(client);
       if (result.success) {
         toast({
-          title: 'Reminder Sent',
-          description: result.message || `Payment reminder email sent to ${client.email}.`,
-          variant: 'default', // Use 'default' which has a green accent in this theme
+          title: 'Recordatorio Enviado',
+          description: result.message || `Correo de recordatorio de pago enviado a ${client.email}.`,
+          variant: 'default',
         });
       } else {
         toast({
-          title: 'Error Sending Reminder',
-          description: result.error || 'Could not send payment reminder.',
+          title: 'Error al Enviar Recordatorio',
+          description: result.error || 'No se pudo enviar el recordatorio de pago.',
           variant: 'destructive',
         });
       }
     } catch (error) {
-      console.error("Error in SendReminderButton:", error);
+      console.error("Error en SendReminderButton:", error);
       toast({
-        title: 'Client-side Error',
-        description: 'An unexpected error occurred while trying to send the reminder.',
+        title: 'Error del Cliente',
+        description: 'Ocurrió un error inesperado al intentar enviar el recordatorio.',
         variant: 'destructive',
       });
     } finally {
@@ -59,13 +59,13 @@ export default function SendReminderButton({ client }: SendReminderButtonProps) 
             size="icon"
             onClick={handleSendReminder}
             disabled={isSending}
-            aria-label={`Send payment reminder to ${client.firstName} ${client.lastName}`}
+            aria-label={`Enviar recordatorio de pago a ${client.firstName} ${client.lastName}`}
           >
             {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
           </Button>
         </TooltipTrigger>
         <TooltipContent>
-          <p>Send Payment Reminder</p>
+          <p>Enviar Recordatorio de Pago</p>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

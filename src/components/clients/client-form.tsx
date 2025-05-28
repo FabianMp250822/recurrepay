@@ -1,3 +1,4 @@
+
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -58,14 +59,13 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
 
       if (result.success) {
         toast({
-          title: isEditMode ? 'Client Updated' : 'Client Created',
-          description: `Client ${values.firstName} ${values.lastName} has been successfully ${isEditMode ? 'updated' : 'created'}.`,
+          title: isEditMode ? 'Cliente Actualizado' : 'Cliente Creado',
+          description: `El cliente ${values.firstName} ${values.lastName} ha sido ${isEditMode ? 'actualizado' : 'creado'} exitosamente.`,
         });
         router.push('/dashboard');
-        router.refresh(); // Ensure data is fresh on dashboard
+        router.refresh(); 
       } else {
         if (result.errors) {
-          // Handle Zod field errors (though client-side should catch most)
           Object.entries(result.errors).forEach(([field, messages]) => {
              if (messages && messages.length > 0) {
                 form.setError(field as keyof z.infer<typeof clientSchema>, { type: 'manual', message: messages[0] });
@@ -74,14 +74,14 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
         }
         toast({
           title: 'Error',
-          description: result.generalError || `Failed to ${isEditMode ? 'update' : 'create'} client. Please try again.`,
+          description: result.generalError || `Error al ${isEditMode ? 'actualizar' : 'crear'} el cliente. Por favor, inténtelo de nuevo.`,
           variant: 'destructive',
         });
       }
     } catch (error) {
       toast({
         title: 'Error',
-        description: `An unexpected error occurred. Please try again.`,
+        description: `Ocurrió un error inesperado. Por favor, inténtelo de nuevo.`,
         variant: 'destructive',
       });
     } finally {
@@ -92,9 +92,9 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{isEditMode ? 'Edit Client' : 'Create New Client'}</CardTitle>
+        <CardTitle>{isEditMode ? 'Editar Cliente' : 'Crear Nuevo Cliente'}</CardTitle>
         <CardDescription>
-          {isEditMode ? 'Update the details of the existing client.' : 'Enter the details for the new client.'}
+          {isEditMode ? 'Actualice los detalles del cliente existente.' : 'Ingrese los detalles para el nuevo cliente.'}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -106,9 +106,9 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
                 name="firstName"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>First Name</FormLabel>
+                    <FormLabel>Nombres</FormLabel>
                     <FormControl>
-                      <Input placeholder="John" {...field} />
+                      <Input placeholder="Juan" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -119,9 +119,9 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
                 name="lastName"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Last Name</FormLabel>
+                    <FormLabel>Apellidos</FormLabel>
                     <FormControl>
-                      <Input placeholder="Doe" {...field} />
+                      <Input placeholder="Pérez" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -133,9 +133,9 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
               name="email"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Email Address</FormLabel>
+                  <FormLabel>Correo Electrónico</FormLabel>
                   <FormControl>
-                    <Input type="email" placeholder="john.doe@example.com" {...field} />
+                    <Input type="email" placeholder="juan.perez@example.com" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -146,9 +146,9 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
               name="phoneNumber"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Phone Number</FormLabel>
+                  <FormLabel>Número de Teléfono</FormLabel>
                   <FormControl>
-                    <Input placeholder="555-123-4567" {...field} />
+                    <Input placeholder="3001234567" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -160,7 +160,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
                 name="paymentAmount"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Recurring Payment Amount ($)</FormLabel>
+                    <FormLabel>Monto de Pago Recurrente ($)</FormLabel>
                     <FormControl>
                       <Input type="number" step="0.01" placeholder="100.00" {...field} />
                     </FormControl>
@@ -173,11 +173,11 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
                 name="paymentDayOfMonth"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Payment Day of Month</FormLabel>
+                    <FormLabel>Día de Pago del Mes</FormLabel>
                     <FormControl>
                       <Input type="number" min="1" max="31" placeholder="15" {...field} />
                     </FormControl>
-                    <FormDescription>Enter a day from 1 to 31.</FormDescription>
+                    <FormDescription>Ingrese un día del 1 al 31.</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -185,11 +185,11 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
             </div>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => router.back()} disabled={isSubmitting}>
-                Cancel
+                Cancelar
               </Button>
               <Button type="submit" disabled={isSubmitting}>
                 {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {isEditMode ? 'Save Changes' : 'Create Client'}
+                {isEditMode ? 'Guardar Cambios' : 'Crear Cliente'}
               </Button>
             </div>
           </form>

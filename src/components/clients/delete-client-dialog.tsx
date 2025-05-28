@@ -1,3 +1,4 @@
+
 'use client';
 
 import React from 'react';
@@ -36,22 +37,22 @@ export default function DeleteClientDialog({ clientId, clientName }: DeleteClien
       const result = await deleteClientAction(clientId);
       if (result.success) {
         toast({
-          title: 'Client Deleted',
-          description: `Client "${clientName}" has been successfully deleted.`,
+          title: 'Cliente Eliminado',
+          description: `El cliente "${clientName}" ha sido eliminado exitosamente.`,
         });
-        router.refresh(); // Refresh the current route (dashboard)
-        setIsOpen(false); // Close the dialog
+        router.refresh(); 
+        setIsOpen(false); 
       } else {
         toast({
           title: 'Error',
-          description: result.error || 'Failed to delete client. Please try again.',
+          description: result.error || 'Error al eliminar el cliente. Por favor, inténtelo de nuevo.',
           variant: 'destructive',
         });
       }
     } catch (error) {
       toast({
         title: 'Error',
-        description: 'An unexpected error occurred. Please try again.',
+        description: 'Ocurrió un error inesperado. Por favor, inténtelo de nuevo.',
         variant: 'destructive',
       });
     } finally {
@@ -64,21 +65,21 @@ export default function DeleteClientDialog({ clientId, clientName }: DeleteClien
       <AlertDialogTrigger asChild>
         <Button variant="destructive" size="icon">
           <Trash2 className="h-4 w-4" />
-          <span className="sr-only">Delete Client</span>
+          <span className="sr-only">Eliminar Cliente</span>
         </Button>
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Are you sure you want to delete this client?</AlertDialogTitle>
+          <AlertDialogTitle>¿Está seguro de que desea eliminar este cliente?</AlertDialogTitle>
           <AlertDialogDescription>
-            This action cannot be undone. This will permanently delete the client record for <strong>{clientName}</strong>.
+            Esta acción no se puede deshacer. Esto eliminará permanentemente el registro del cliente <strong>{clientName}</strong>.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={isDeleting}>Cancelar</AlertDialogCancel>
           <AlertDialogAction onClick={handleDelete} disabled={isDeleting} className="bg-destructive hover:bg-destructive/90">
             {isDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Delete
+            Eliminar
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

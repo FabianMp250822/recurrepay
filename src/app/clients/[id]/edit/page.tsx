@@ -1,3 +1,4 @@
+
 import AppLayout from '@/components/layout/app-layout';
 import { ClientForm } from '@/components/clients/client-form';
 import { getClientById } from '@/lib/store';

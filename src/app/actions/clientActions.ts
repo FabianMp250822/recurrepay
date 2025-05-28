@@ -1,3 +1,4 @@
+
 'use server';
 
 import { revalidatePath } from 'next/cache';
@@ -58,69 +59,65 @@ export async function sendPaymentReminderEmailAction(client: Client) {
   } = process.env;
 
   if (!EMAIL_SERVER_HOST || !EMAIL_SERVER_PORT || !EMAIL_SERVER_USER || !EMAIL_SERVER_PASSWORD || !EMAIL_FROM) {
-    console.error('Missing email configuration in .env. Please ensure EMAIL_SERVER_HOST, EMAIL_SERVER_PORT, EMAIL_SERVER_USER, EMAIL_SERVER_PASSWORD, and EMAIL_FROM are set.');
-    return { success: false, error: 'Email server not configured. Administrator has been notified.' };
+    console.error('Falta configuración de correo en .env. Asegúrate de que EMAIL_SERVER_HOST, EMAIL_SERVER_PORT, EMAIL_SERVER_USER, EMAIL_SERVER_PASSWORD, y EMAIL_FROM estén configurados.');
+    return { success: false, error: 'Servidor de correo no configurado. El administrador ha sido notificado.' };
   }
 
   const transporter = nodemailer.createTransport({
     host: EMAIL_SERVER_HOST,
     port: parseInt(EMAIL_SERVER_PORT, 10),
-    secure: parseInt(EMAIL_SERVER_PORT, 10) === 465, // true for 465 (SSL), false for other ports (TLS/STARTTLS)
+    secure: parseInt(EMAIL_SERVER_PORT, 10) === 465, // true para 465 (SSL), false para otros puertos (TLS/STARTTLS)
     auth: {
       user: EMAIL_SERVER_USER,
       pass: EMAIL_SERVER_PASSWORD,
     },
     tls: {
-      // For Hostinger, sometimes explicit rejectUnauthorized: false is needed if there are SSL cert issues,
-      // but it's better to ensure the server has valid certs. Start without it.
-      // rejectUnauthorized: false 
+      // rejectUnauthorized: false // Considerar si hay problemas de certificado SSL con Hostinger
     }
   });
 
   const mailOptions = {
     from: `"RecurPay" <${EMAIL_FROM}>`,
     to: client.email,
-    subject: `Payment Reminder: Your Upcoming Payment for RecurPay`,
+    subject: `Recordatorio de Pago - RecurPay`,
     html: `
       <div style="font-family: Arial, sans-serif; line-height: 1.6;">
-        <h2 style="color: #64B5F6;">Payment Reminder</h2>
-        <p>Dear ${client.firstName} ${client.lastName},</p>
-        <p>This is a friendly reminder that your recurring payment of <strong>${formatCurrency(client.paymentAmount)}</strong> is scheduled for <strong>${formatDate(client.nextPaymentDate)}</strong>.</p>
-        <p><strong>Client Details:</strong></p>
+        <h2 style="color: #64B5F6;">Recordatorio de Pago</h2>
+        <p>Estimado/a ${client.firstName} ${client.lastName},</p>
+        <p>Este es un recordatorio amigable sobre su pago recurrente de <strong>${formatCurrency(client.paymentAmount)}</strong> programado para el <strong>${formatDate(client.nextPaymentDate)}</strong>.</p>
+        <p><strong>Detalles del Cliente:</strong></p>
         <ul>
-          <li>Name: ${client.firstName} ${client.lastName}</li>
-          <li>Email: ${client.email}</li>
-          <li>Payment Amount: ${formatCurrency(client.paymentAmount)}</li>
-          <li>Payment Due Date: ${formatDate(client.nextPaymentDate)}</li>
+          <li>Nombre: ${client.firstName} ${client.lastName}</li>
+          <li>Correo Electrónico: ${client.email}</li>
+          <li>Monto del Pago: ${formatCurrency(client.paymentAmount)}</li>
+          <li>Fecha de Vencimiento del Pago: ${formatDate(client.nextPaymentDate)}</li>
         </ul>
-        <p>If you have already made this payment, please disregard this email. If you have any questions or need to update your payment information, please contact us.</p>
-        <p>Thank you for your continued business!</p>
-        <p>Sincerely,</p>
-        <p><strong>The RecurPay Team</strong></p>
+        <p>Si ya ha realizado este pago, por favor ignore este correo. Si tiene alguna pregunta o necesita actualizar su información de pago, no dude en contactarnos.</p>
+        <p>¡Gracias por su preferencia!</p>
+        <p>Atentamente,</p>
+        <p><strong>El Equipo de RecurPay</strong></p>
         <hr style="border: none; border-top: 1px solid #E3F2FD; margin-top: 20px; margin-bottom: 10px;" />
         <p style="font-size: 0.8em; color: #777;">
-          This is an automated message from RecurPay. Please do not reply directly to this email.
+          Este es un mensaje automático de RecurPay. Por favor, no responda directamente a este correo electrónico.
         </p>
       </div>
     `,
   };
 
   try {
-    await transporter.verify(); // Verify connection configuration
+    await transporter.verify(); // Verificar configuración de conexión
     const info = await transporter.sendMail(mailOptions);
-    console.log('Email sent: ' + info.response);
-    return { success: true, message: `Reminder email sent to ${client.email}` };
+    console.log('Correo enviado: ' + info.response);
+    return { success: true, message: `Correo de recordatorio enviado a ${client.email}` };
   } catch (error) {
-    console.error('Error sending email:', error);
-    // Provide a more generic error to the client for security
-    let errorMessage = 'Failed to send email. Please try again later.';
+    console.error('Error al enviar correo:', error);
+    let errorMessage = 'Error al enviar el correo. Por favor, inténtelo de nuevo más tarde.';
     if (error instanceof Error && 'code' in error) {
-        // nodemailer error codes https://nodemailer.com/usage/showcase/
         const nodemailerError = error as (Error & { code?: string });
         if (nodemailerError.code === 'EAUTH') {
-            errorMessage = 'Failed to send email due to authentication error. Please check server credentials.';
+            errorMessage = 'Error al enviar el correo debido a un error de autenticación. Por favor, verifique las credenciales del servidor.';
         } else if (nodemailerError.code === 'ECONNREFUSED') {
-            errorMessage = 'Failed to send email. Connection to email server refused.';
+            errorMessage = 'Error al enviar el correo. Conexión al servidor de correo rechazada.';
         }
     }
     return { success: false, error: errorMessage };
