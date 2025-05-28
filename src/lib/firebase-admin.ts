@@ -5,56 +5,59 @@ import * as admin from 'firebase-admin';
 let adminDbInstance: admin.firestore.Firestore | null = null;
 let adminAuthInstance: admin.auth.Auth | null = null;
 
+console.log('[Firebase Admin] Top of firebase-admin.ts. Attempting to initialize...');
+
 if (!admin.apps.length) {
-  console.log('[Firebase Admin] Attempting to initialize Firebase Admin SDK...');
+  console.log('[Firebase Admin] No Firebase apps initialized yet. Proceeding with initialization.');
   const serviceAccountJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
 
   if (!serviceAccountJson || serviceAccountJson.trim() === "") {
     console.error(
-      'CRITICAL_FIREBASE_ADMIN_INIT_ERROR: GOOGLE_APPLICATION_CREDENTIALS_JSON environment variable is not set or is empty. Firebase Admin SDK cannot be initialized.'
+      'CRITICAL_FIREBASE_ADMIN_INIT_ERROR: GOOGLE_APPLICATION_CREDENTIALS_JSON environment variable is not set or is empty. Firebase Admin SDK CANNOT be initialized. Ensure .env file is correctly set up and server is restarted.'
     );
   } else {
     try {
       const serviceAccount = JSON.parse(serviceAccountJson);
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
-        // Add your databaseURL if you need it for Realtime Database, not typically needed for Firestore Admin SDK
-        // databaseURL: `https://${serviceAccount.project_id}.firebaseio.com` 
       });
-      console.log('[Firebase Admin] Firebase Admin SDK initialized successfully.');
+      console.log('[Firebase Admin] admin.initializeApp() called successfully.');
     } catch (error: any) {
-      console.error('CRITICAL_FIREBASE_ADMIN_INIT_ERROR: Firebase Admin SDK initialization failed. Details:');
+      console.error('CRITICAL_FIREBASE_ADMIN_INIT_ERROR: Firebase Admin SDK initialization failed during JSON.parse() or admin.initializeApp().');
       console.error('Error Name:', error.name);
       console.error('Error Message:', error.message);
-      // Log only a portion of the stack for brevity in console, but full stack is useful for debugging
       console.error('Error Stack (partial):', error.stack ? String(error.stack).substring(0, 500) : 'No stack available');
-      if (serviceAccountJson.length < 200) { // Avoid logging very large strings if it's not the key itself
-        console.error('Value of GOOGLE_APPLICATION_CREDENTIALS_JSON (check for validity):', serviceAccountJson.substring(0,100) + "...");
+      if (serviceAccountJson.length < 200) {
+        console.error('Value of GOOGLE_APPLICATION_CREDENTIALS_JSON (first 100 chars):', serviceAccountJson.substring(0,100) + "...");
       }
     }
   }
 } else {
-  console.log('[Firebase Admin] Firebase Admin SDK already initialized.');
+  console.log('[Firebase Admin] Firebase Admin SDK app already initialized or an app exists.');
 }
 
-// After attempting initialization, check if an app exists
-if (admin.apps.length > 0 && admin.apps[0]) { // Check for default app
+// After attempting initialization, check if an app exists and try to get services
+if (admin.apps.length > 0 && admin.apps[0]) {
+  console.log('[Firebase Admin] Default app found. Attempting to get Firestore and Auth services.');
   try {
     adminDbInstance = admin.firestore();
     adminAuthInstance = admin.auth();
-    console.log('[Firebase Admin] Firebase Admin services (adminDb, adminAuth) are available.');
+    console.log('[Firebase Admin] SUCCESS: Firebase Admin services (adminDb, adminAuth) are available and assigned.');
   } catch (serviceError: any) {
-    console.error('CRITICAL_FIREBASE_ADMIN_SERVICE_ERROR: Error getting Firestore/Auth service even after app initialization. This should not happen if app initialized correctly.');
+    console.error('CRITICAL_FIREBASE_ADMIN_SERVICE_ERROR: Error getting Firestore/Auth service even after app initialization.');
     console.error('Service Error Name:', serviceError.name);
     console.error('Service Error Message:', serviceError.message);
+    adminDbInstance = null; // Ensure it's null if service acquisition fails
+    adminAuthInstance = null;
   }
 } else {
   console.error(
-    'CRITICAL_FIREBASE_ADMIN_INIT_ERROR: Firebase Admin SDK was not initialized successfully (or no default app exists). adminDb and adminAuth will be null. Review server logs for CRITICAL_FIREBASE_ADMIN_INIT_ERROR messages (GOOGLE_APPLICATION_CREDENTIALS_JSON issues or JSON.parse failures).'
+    'CRITICAL_FIREBASE_ADMIN_INIT_FAILURE: No Firebase Admin app was available after initialization attempt. adminDb and adminAuth WILL BE NULL. Review previous logs for reasons (e.g., missing GOOGLE_APPLICATION_CREDENTIALS_JSON or initialization errors).'
   );
+  adminDbInstance = null; // Explicitly ensure it's null
+  adminAuthInstance = null;
 }
 
 export const adminDb = adminDbInstance;
 export const adminAuth = adminAuthInstance;
-// Exporting the admin namespace itself is useful for other admin features if needed
 export { admin };

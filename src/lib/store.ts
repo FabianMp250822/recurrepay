@@ -53,7 +53,7 @@ export async function getClientById(id: string): Promise<Client | undefined> {
 // WRITE operations use the Admin SDK (adminDb)
 export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ client?: Client, error?: string }> {
   if (!adminDb) {
-    console.error("CRITICAL_STORE_ERROR: adminDb is not initialized in store.ts. Firebase Admin SDK setup issue. Check server logs for '[Firebase Admin]' or 'CRITICAL_FIREBASE_ADMIN_INIT_ERROR' messages.");
+    console.error("CRITICAL_STORE_ERROR (addClient): adminDb is not initialized in store.ts. Firebase Admin SDK setup issue. Check server logs for '[Firebase Admin]' or 'CRITICAL_FIREBASE_ADMIN_INIT_ERROR' messages.");
     return { error: "Error de servidor: La conexión con la base de datos (admin) no está inicializada. Por favor, revise los logs del servidor y contacte al administrador." };
   }
   try {
@@ -68,20 +68,25 @@ export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ clien
   } catch (error: any) {
     console.error("Error adding client to Firestore (Admin SDK) (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     let userMessage = "Error al agregar el cliente. Inténtelo de nuevo.";
-     if (error.code === 'permission-denied') {
-        userMessage = "Permiso denegado por Firestore al intentar guardar el cliente (Admin SDK). Esto es inusual si el Admin SDK está configurado correctamente.";
-     } else if (error.code === 'invalid-argument') {
+    if (error.code === 'permission-denied') {
+        // This case should be rare with Admin SDK unless there are project-level IAM issues.
+        // More likely, if rules were being checked, `request.auth` would be null for server actions using client SDK.
+        // However, with Admin SDK, rules are bypassed.
+        userMessage = "Permiso denegado por Firestore (Admin SDK). Esto es inusual; verifique la configuración del proyecto.";
+    } else if (error.code === 'invalid-argument') {
         userMessage = "Error al agregar el cliente: argumento inválido. Verifique los datos enviados.";
-     } else if (error instanceof Error) {
+    } else if (error instanceof Error && (error.message.includes("undefined") || error.message.includes("NaN"))) {
+        userMessage = `Error al agregar cliente: uno o más campos tienen valores inválidos (undefined o NaN). Por favor, revise los datos del formulario y los cálculos. Detalle: ${error.message}`;
+    } else if (error instanceof Error) {
         userMessage = `Error al agregar cliente (Admin SDK): ${error.message}`;
-     }
+    }
     return { error: userMessage };
   }
 }
 
 export async function updateClient(id: string, clientData: Omit<Client, 'id' | 'createdAt'>): Promise<{ client?: Client, error?: string }> {
   if (!adminDb) {
-    console.error("CRITICAL_STORE_ERROR: adminDb is not initialized in store.ts. Firebase Admin SDK setup issue. Check server logs for '[Firebase Admin]' or 'CRITICAL_FIREBASE_ADMIN_INIT_ERROR' messages.");
+    console.error("CRITICAL_STORE_ERROR (updateClient): adminDb is not initialized in store.ts. Firebase Admin SDK setup issue. Check server logs.");
     return { error: "Error de servidor: La conexión con la base de datos (admin) no está inicializada. Por favor, revise los logs del servidor y contacte al administrador." };
   }
   try {
@@ -107,7 +112,7 @@ export async function updateClient(id: string, clientData: Omit<Client, 'id' | '
 
     const dataToUpdate = {
         ...clientData,
-        createdAt: originalClientData.createdAt
+        createdAt: originalClientData.createdAt // Preserve original createdAt
     };
 
     await clientDocRef.update(dataToUpdate);
@@ -117,9 +122,11 @@ export async function updateClient(id: string, clientData: Omit<Client, 'id' | '
     console.error("Error updating client in Firestore (Admin SDK) (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     let userMessage = "Error al actualizar el cliente. Inténtelo de nuevo.";
     if (error.code === 'permission-denied') {
-        userMessage = "Permiso denegado por Firestore al intentar actualizar el cliente (Admin SDK). Esto es inusual si el Admin SDK está configurado correctamente.";
+        userMessage = "Permiso denegado por Firestore (Admin SDK).";
     } else if (error.code === 'invalid-argument') {
         userMessage = "Error al actualizar el cliente: argumento inválido. Verifique los datos enviados.";
+     } else if (error instanceof Error && (error.message.includes("undefined") || error.message.includes("NaN"))) {
+        userMessage = `Error al actualizar cliente: uno o más campos tienen valores inválidos (undefined o NaN). Por favor, revise los datos del formulario y los cálculos. Detalle: ${error.message}`;
     } else if (error instanceof Error) {
         userMessage = `Error al actualizar cliente (Admin SDK): ${error.message}`;
     }
@@ -129,7 +136,7 @@ export async function updateClient(id: string, clientData: Omit<Client, 'id' | '
 
 export async function deleteClient(id: string): Promise<{ success?: boolean, error?: string }> {
   if (!adminDb) {
-    console.error("CRITICAL_STORE_ERROR: adminDb is not initialized in store.ts. Firebase Admin SDK setup issue. Check server logs for '[Firebase Admin]' or 'CRITICAL_FIREBASE_ADMIN_INIT_ERROR' messages.");
+    console.error("CRITICAL_STORE_ERROR (deleteClient): adminDb is not initialized in store.ts. Firebase Admin SDK setup issue. Check server logs.");
     return { error: "Error de servidor: La conexión con la base de datos (admin) no está inicializada. Por favor, revise los logs del servidor y contacte al administrador." };
   }
   try {
@@ -140,7 +147,7 @@ export async function deleteClient(id: string): Promise<{ success?: boolean, err
     console.error("Error deleting client from Firestore (Admin SDK) (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     let userMessage = "Error al eliminar el cliente. Inténtelo de nuevo.";
     if (error.code === 'permission-denied') {
-        userMessage = "Permiso denegado por Firestore al intentar eliminar el cliente (Admin SDK). Esto es inusual si el Admin SDK está configurado correctamente.";
+        userMessage = "Permiso denegado por Firestore (Admin SDK).";
     } else if (error instanceof Error) {
         userMessage = `Error al eliminar cliente (Admin SDK): ${error.message}`;
     }
