@@ -5,8 +5,7 @@ import { z } from 'zod';
 import { clientSchema } from '@/lib/schema';
 import * as store from '@/lib/store';
 import type { ClientFormData } from '@/types';
-import { generateEmailSubject } from '@/ai/flows/generate-email-subject';
-import { getDaysUntilDue } from '@/lib/utils';
+// import { getDaysUntilDue } from '@/lib/utils'; // Removed as no longer used
 
 export async function createClientAction(formData: ClientFormData) {
   const validationResult = clientSchema.safeParse(formData);
@@ -48,20 +47,4 @@ export async function deleteClientAction(id: string) {
   return { success: true };
 }
 
-export async function generateReminderSubjectAction(clientName: string, paymentAmount: number, nextPaymentDate: string) {
-  try {
-    const daysUntilDue = getDaysUntilDue(nextPaymentDate);
-    if (daysUntilDue < 0) {
-        return { success: false, error: "Payment date is in the past." };
-    }
-    const subjectOutput = await generateEmailSubject({
-      clientName,
-      paymentAmount,
-      daysUntilDue,
-    });
-    return { success: true, subject: subjectOutput.subject };
-  } catch (error) {
-    console.error("Error generating email subject:", error);
-    return { success: false, error: "Failed to generate email subject." };
-  }
-}
+// generateReminderSubjectAction function has been removed as it relied on Genkit.
