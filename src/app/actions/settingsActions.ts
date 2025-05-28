@@ -44,30 +44,34 @@ export async function fetchGeneralSettingsAction(): Promise<AppGeneralSettings> 
 
 export async function updateGeneralSettingsAction(formData: AppGeneralSettingsFormData) {
   // Map AppGeneralSettingsFormData to AppGeneralSettings for Zod validation
-  // The appLogoFile is handled client-side for upload; only appLogoUrl is validated here if present.
   const dataToValidate: Partial<AppGeneralSettings> = {
     appName: formData.appName,
-    appLogoUrl: formData.appLogoUrl, // This URL comes after client-side upload
+    appLogoUrl: formData.appLogoUrl, 
     notificationsEnabled: formData.notificationsEnabled,
+    themePrimary: formData.themePrimary,
+    themeSecondary: formData.themeSecondary,
+    themeAccent: formData.themeAccent,
+    themeBackground: formData.themeBackground,
+    themeForeground: formData.themeForeground,
   };
 
   const validationResult = generalSettingsSchema.safeParse(dataToValidate);
 
   if (!validationResult.success) {
+    const fieldErrors = validationResult.error.flatten().fieldErrors;
+    console.error("Validation errors general settings:", fieldErrors);
     return {
       success: false,
-      errors: validationResult.error.flatten().fieldErrors,
+      errors: fieldErrors,
       generalError: "Error de validación en configuración general. Por favor revise los campos."
     };
   }
 
-  // The validated data should be AppGeneralSettings type now
   const result = await store.saveGeneralSettings(validationResult.data as AppGeneralSettings);
 
   if (result.success) {
     revalidatePath('/settings');
-    // Revalidate other paths if appName or appLogoUrl affects them (e.g., layout, header)
-    revalidatePath('/', 'layout'); // Revalidate root layout
+    revalidatePath('/', 'layout'); 
     return { success: true, message: "Configuración general actualizada." };
   } else {
     return { success: false, generalError: result.error || "No se pudo actualizar la configuración general." };

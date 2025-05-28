@@ -94,6 +94,20 @@ export interface AppGeneralSettings {
   appName?: string;
   appLogoUrl?: string;
   notificationsEnabled?: boolean;
+  // Theme colors (HSL components)
+  primaryColorH?: number;
+  primaryColorS?: number;
+  primaryColorL?: number;
+  secondaryColorH?: number;
+  secondaryColorS?: number;
+  secondaryColorL?: number;
+  // You can add more for accent, destructive, background, foreground, card, etc.
+  // For --primary, --secondary, --accent HSL values
+  themePrimary?: string; // e.g., "207 88% 68%"
+  themeSecondary?: string; // e.g., "207 88% 88%"
+  themeAccent?: string; // e.g., "124 39% 64%"
+  themeBackground?: string; // e.g., "207 88% 94%"
+  themeForeground?: string; // e.g., "210 40% 25%"
 }
 
 export type AppGeneralSettingsFormData = {
@@ -101,4 +115,10 @@ export type AppGeneralSettingsFormData = {
   appLogoFile?: File | null; // For form handling
   appLogoUrl?: string; // For storing/retrieving existing URL
   notificationsEnabled?: boolean;
+  // Theme colors
+  themePrimary?: string;
+  themeSecondary?: string;
+  themeAccent?: string;
+  themeBackground?: string;
+  themeForeground?: string;
 };

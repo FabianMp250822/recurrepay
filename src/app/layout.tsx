@@ -5,6 +5,7 @@ import './globals.css';
 import { Toaster } from '@/components/ui/toaster';
 import AppProviders from '@/components/layout/app-providers';
 import { AuthProvider } from '@/contexts/AuthContext';
+import ThemeApplicator from '@/components/layout/ThemeApplicator'; // Import the new component
 
 const openSans = Open_Sans({
   subsets: ['latin'],
@@ -25,13 +26,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es" suppressHydrationWarning><body className={`${openSans.variable} font-sans antialiased`}>
+    <html lang="es" suppressHydrationWarning>
+      <body className={`${openSans.variable} font-sans antialiased`}>
         <AuthProvider>
           <AppProviders>
+            <ThemeApplicator /> {/* Add ThemeApplicator here */}
             {children}
             <Toaster />
           </AppProviders>
         </AuthProvider>
-      </body></html>
+      </body>
+    </html>
   );
 }

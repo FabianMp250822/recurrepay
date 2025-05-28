@@ -1,4 +1,3 @@
-
 'use client';
 
 import Link from 'next/link';
@@ -17,7 +16,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { fetchGeneralSettingsAction } from '@/app/actions/settingsActions';
 import type { AppGeneralSettings } from '@/types';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -39,7 +38,7 @@ export function AppHeader() {
 
   useEffect(() => {
     async function loadHeaderGeneralSettings() {
-      if (isAdmin && user) {
+      if (initialLoadComplete && isAdmin && user) {
         setIsLoadingHeaderSettings(true);
         try {
           const settings: AppGeneralSettings = await fetchGeneralSettingsAction();
@@ -54,25 +53,24 @@ export function AppHeader() {
         } finally {
           setIsLoadingHeaderSettings(false);
         }
-      } else {
+      } else if (initialLoadComplete) {
         setHeaderAppName('RecurPay');
         setHeaderAppLogoUrl(null);
         setIsLoadingHeaderSettings(false);
       }
     }
-     if (initialLoadComplete) {
-      loadHeaderGeneralSettings();
-    }
+    loadHeaderGeneralSettings();
   }, [isAdmin, user, initialLoadComplete]);
 
   const getPageTitle = () => {
-    if (pathname === ('/dashboard')) return 'Panel de Analíticas';
-    if (pathname === ('/clients')) return 'Lista de Clientes';
+    const currentNavItem = navItems.find(item => pathname.startsWith(item.href) && (item.href !== '/' || pathname === '/'));
+    if (currentNavItem) return currentNavItem.label;
+
     if (pathname.startsWith('/clients/new')) return 'Crear Nuevo Cliente';
     if (pathname.match(/^\/clients\/[^/]+\/edit$/)) return 'Editar Cliente';
-    if (pathname === ('/settings')) return 'Configuración';
-    if (pathname.startsWith('/login')) return 'Inicio de Sesión de Administrador';
-    return headerAppName; // Usa el nombre de la app dinámico aquí también
+    if (pathname.startsWith('/login')) return 'Inicio de Sesión';
+    // Fallback to app name if no specific title matches
+    return isLoadingHeaderSettings ? 'Cargando...' : headerAppName;
   };
   
   if (!initialLoadComplete || (!isAdmin && pathname !== '/login')) {
@@ -96,18 +94,22 @@ export function AppHeader() {
                 <SheetClose asChild>
                   <Link
                     href="/dashboard"
-                    className="group flex h-10 items-center gap-2 rounded-full bg-primary text-lg font-semibold text-primary-foreground md:text-base mb-4"
+                    className="group flex h-10 items-center gap-2 rounded-full bg-primary px-3 py-2 text-lg font-semibold text-primary-foreground md:text-base mb-4"
                   >
                     {isLoadingHeaderSettings ? (
-                      <Skeleton className="h-5 w-5 rounded-full bg-background/30" />
+                      <>
+                        <Skeleton className="h-6 w-6 rounded-sm bg-background/30" />
+                        <Skeleton className="h-4 w-20 bg-background/30 ml-1" />
+                      </>
                     ) : headerAppLogoUrl ? (
-                      <Image src={headerAppLogoUrl} alt="App Logo" width={20} height={20} className="h-5 w-5 object-contain" unoptimized/>
+                      <Image src={headerAppLogoUrl} alt="App Logo" width={24} height={24} className="h-6 w-auto max-w-[150px] object-contain" unoptimized/>
+                      // No appName text if logo exists in this specific spot for mobile sheet header
                     ) : (
-                      <CreditCard className="h-5 w-5 transition-all group-hover:scale-110" />
+                      <>
+                        <CreditCard className="h-5 w-5 transition-all group-hover:scale-110" />
+                        <span className="text-base">{headerAppName}</span>
+                      </>
                     )}
-                    <span className="text-base"> {/* Asegúrate que el nombre sea visible */}
-                      {isLoadingHeaderSettings ? <Skeleton className="h-4 w-20 bg-background/30" /> : headerAppName}
-                    </span>
                   </Link>
                 </SheetClose>
               {navItems.map((item) => {
@@ -149,6 +151,7 @@ export function AppHeader() {
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="icon" className="overflow-hidden rounded-full">
               <Avatar className="h-8 w-8">
+                {/* Consider using a user-specific avatar if available in future */}
                 <AvatarImage src="https://placehold.co/40x40.png" alt="Avatar de Usuario" data-ai-hint="user avatar" />
                 <AvatarFallback>{user.email ? user.email.substring(0, 2).toUpperCase() : 'RP'}</AvatarFallback>
               </Avatar>

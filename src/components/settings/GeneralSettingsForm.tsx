@@ -2,7 +2,7 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm, Controller } from 'react-hook-form';
+import { useForm } from 'react-hook-form';
 import type { z } from 'zod';
 import React, { useState, useCallback, useEffect } from 'react';
 import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -26,8 +26,9 @@ import { useToast } from '@/hooks/use-toast';
 import { generalSettingsSchema } from '@/lib/schema';
 import type { AppGeneralSettings, AppGeneralSettingsFormData } from '@/types';
 import { updateGeneralSettingsAction } from '@/app/actions/settingsActions';
-import { storage, auth } from '@/lib/firebase'; // Ensure auth is imported if needed for rules, though typically storage rules handle this
-import { Loader2, UploadCloud, FileText, CheckCircle2, XCircle, LinkIcon, Trash2 } from 'lucide-react';
+import { storage, auth } from '@/lib/firebase';
+import { Loader2, UploadCloud, CheckCircle2, XCircle, LinkIcon, Trash2, Palette } from 'lucide-react';
+import { Separator } from '../ui/separator';
 
 type GeneralSettingsFormProps = {
   currentSettings: AppGeneralSettings;
@@ -36,7 +37,7 @@ type GeneralSettingsFormProps = {
 type FileUploadState = {
   file: File | null;
   progress: number;
-  url: string | null; // Holds the URL after successful upload OR the existing URL
+  url: string | null; 
   name: string | null;
   error: string | null;
   isUploading: boolean;
@@ -56,7 +57,7 @@ export function GeneralSettingsForm({ currentSettings }: GeneralSettingsFormProp
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [logoUploadState, setLogoUploadState] = useState<FileUploadState>({
     ...initialFileUploadState,
-    url: currentSettings.appLogoUrl || null, // Initialize with current logo URL
+    url: currentSettings.appLogoUrl || null, 
   });
 
   const form = useForm<z.infer<typeof generalSettingsSchema>>({
@@ -65,15 +66,24 @@ export function GeneralSettingsForm({ currentSettings }: GeneralSettingsFormProp
       appName: currentSettings.appName || '',
       appLogoUrl: currentSettings.appLogoUrl || '',
       notificationsEnabled: currentSettings.notificationsEnabled || false,
+      themePrimary: currentSettings.themePrimary || '',
+      themeSecondary: currentSettings.themeSecondary || '',
+      themeAccent: currentSettings.themeAccent || '',
+      themeBackground: currentSettings.themeBackground || '',
+      themeForeground: currentSettings.themeForeground || '',
     },
   });
 
-  // Update form if currentSettings change (e.g., after save and re-fetch)
   useEffect(() => {
     form.reset({
       appName: currentSettings.appName || '',
       appLogoUrl: currentSettings.appLogoUrl || '',
       notificationsEnabled: currentSettings.notificationsEnabled || false,
+      themePrimary: currentSettings.themePrimary || '',
+      themeSecondary: currentSettings.themeSecondary || '',
+      themeAccent: currentSettings.themeAccent || '',
+      themeBackground: currentSettings.themeBackground || '',
+      themeForeground: currentSettings.themeForeground || '',
     });
     setLogoUploadState(prev => ({ ...prev, url: currentSettings.appLogoUrl || null, name: null, file: null, progress: 0, error: null, isUploading: false }));
   }, [currentSettings, form]);
@@ -81,9 +91,6 @@ export function GeneralSettingsForm({ currentSettings }: GeneralSettingsFormProp
 
   const handleLogoUpload = useCallback(async (file: File) => {
     if (!file) return;
-
-    // Optional: Validate user is admin before upload attempt (client-side check)
-    // This is secondary to Storage security rules
     if (!auth.currentUser) {
         toast({ title: "Error", description: "Debe estar autenticado para subir un logo.", variant: "destructive" });
         return;
@@ -91,7 +98,6 @@ export function GeneralSettingsForm({ currentSettings }: GeneralSettingsFormProp
     
     setLogoUploadState(prev => ({ ...prev, isUploading: true, file, progress: 0, error: null }));
     const uniqueFileName = `logo_${Date.now()}_${file.name}`;
-    // Using a more generic path, or could include user UID if logos were user-specific
     const storagePath = `app_branding/logo/${uniqueFileName}`; 
     const storageRef = ref(storage, storagePath);
     const uploadTask = uploadBytesResumable(storageRef, file);
@@ -117,26 +123,21 @@ export function GeneralSettingsForm({ currentSettings }: GeneralSettingsFormProp
 
   const handleDeleteLogo = async () => {
     if (!logoUploadState.url) return;
-
-    // Optional: Confirm before deleting
     const confirmed = window.confirm("¿Está seguro de que desea eliminar el logo actual? Esta acción no se puede deshacer si guarda los cambios.");
     if (!confirmed) return;
     
-    // If the URL is a Firebase Storage URL, try to delete it from Storage
     if (logoUploadState.url.includes("firebasestorage.googleapis.com")) {
         try {
             const logoRef = ref(storage, logoUploadState.url);
             await deleteObject(logoRef);
             toast({ title: "Logo eliminado de Storage" });
         } catch (error: any) {
-            // If deletion fails (e.g. rules, file not found), still clear it from the form.
-            // The server will save an empty URL.
             console.warn("No se pudo eliminar el logo de Firebase Storage:", error.message);
              toast({ title: "Advertencia", description: "No se pudo eliminar el archivo de logo anterior del almacenamiento, pero se quitará de la configuración.", variant: "default" });
         }
     }
-    setLogoUploadState(initialFileUploadState); // Reset state
-    form.setValue('appLogoUrl', '', { shouldValidate: true }); // Clear URL in form
+    setLogoUploadState(initialFileUploadState); 
+    form.setValue('appLogoUrl', '', { shouldValidate: true }); 
   };
 
 
@@ -145,8 +146,13 @@ export function GeneralSettingsForm({ currentSettings }: GeneralSettingsFormProp
 
     const formDataToSubmit: AppGeneralSettingsFormData = {
       appName: values.appName,
-      appLogoUrl: logoUploadState.url || '', // Use the URL from upload state or existing
+      appLogoUrl: logoUploadState.url || '', 
       notificationsEnabled: values.notificationsEnabled,
+      themePrimary: values.themePrimary,
+      themeSecondary: values.themeSecondary,
+      themeAccent: values.themeAccent,
+      themeBackground: values.themeBackground,
+      themeForeground: values.themeForeground,
     };
 
     try {
@@ -156,7 +162,6 @@ export function GeneralSettingsForm({ currentSettings }: GeneralSettingsFormProp
           title: 'Configuración Guardada',
           description: result.message || 'La configuración general ha sido actualizada.',
         });
-        // Form reset is handled by useEffect on currentSettings change
       } else {
         if (result.errors) {
           Object.entries(result.errors).forEach(([field, messages]) => {
@@ -182,17 +187,39 @@ export function GeneralSettingsForm({ currentSettings }: GeneralSettingsFormProp
     }
   }
 
+  const renderColorInput = (
+    name: "themePrimary" | "themeSecondary" | "themeAccent" | "themeBackground" | "themeForeground",
+    label: string,
+    placeholder: string = "Ej: 210 40% 8%"
+  ) => (
+    <FormField
+      control={form.control}
+      name={name}
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>{label}</FormLabel>
+          <FormControl>
+            <Input placeholder={placeholder} {...field} />
+          </FormControl>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  );
+
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Identidad y Preferencias de la Aplicación</CardTitle>
         <CardDescription>
-          Personalice el nombre, logo y otras configuraciones generales de la plataforma RecurPay.
+          Personalice el nombre, logo, colores del tema y otras configuraciones generales de la plataforma.
         </CardDescription>
       </CardHeader>
       <CardContent>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+            {/* App Name and Logo Section */}
             <FormField
               control={form.control}
               name="appName"
@@ -221,7 +248,7 @@ export function GeneralSettingsForm({ currentSettings }: GeneralSettingsFormProp
                     width={150} 
                     height={50} 
                     className="rounded object-contain border bg-slate-100 dark:bg-slate-800"
-                    unoptimized // If storage URLs are not in next.config.js images.remotePatterns
+                    unoptimized 
                   />
                    <Button 
                     type="button" 
@@ -238,7 +265,7 @@ export function GeneralSettingsForm({ currentSettings }: GeneralSettingsFormProp
               {!logoUploadState.url && !logoUploadState.isUploading && (
                  <div className="my-2 p-2 border rounded-md border-dashed">
                   <Image 
-                    src="https://placehold.co/150x50.png?text=Sin+Logo" // Placeholder
+                    src="https://placehold.co/150x50.png?text=Sin+Logo"
                     alt="Sin logo configurado" 
                     width={150} 
                     height={50} 
@@ -262,7 +289,7 @@ export function GeneralSettingsForm({ currentSettings }: GeneralSettingsFormProp
                   <p className="text-xs text-muted-foreground mt-1">Subiendo: {logoUploadState.file?.name} ({logoUploadState.progress.toFixed(0)}%)</p>
                 </div>
               )}
-              {logoUploadState.url && !logoUploadState.isUploading && logoUploadState.file && ( // Only show success if a NEW file was just uploaded
+              {logoUploadState.url && !logoUploadState.isUploading && logoUploadState.file && ( 
                 <div className="mt-2 text-sm text-green-600 flex items-center gap-1">
                   <CheckCircle2 size={16} /> ¡{logoUploadState.name} subido con éxito! La URL se guardará al hacer clic en "Guardar Cambios".
                 </div>
@@ -273,11 +300,38 @@ export function GeneralSettingsForm({ currentSettings }: GeneralSettingsFormProp
                 </div>
               )}
               <FormDescription>
-                Sube el logo de tu empresa (recomendado: PNG, JPG, SVG, WEBP, max 2MB).
+                Sube el logo de tu empresa (PNG, JPG, SVG, WEBP, max 2MB).
               </FormDescription>
               <FormMessage />
             </FormItem>
             
+            <Separator />
+
+            {/* Theme Color Customization Section */}
+            <div className="space-y-2">
+                <h3 className="text-lg font-medium flex items-center gap-2"><Palette size={20} /> Personalización de Tema</h3>
+                <p className="text-sm text-muted-foreground">
+                    Define los colores principales de la aplicación. Usa el formato HSL: Hue (0-360) Saturation% (0-100%) Lightness% (0-100%).
+                    Por ejemplo: <code>210 40% 98%</code>. Los cambios se aplicarán globalmente.
+                </p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {renderColorInput("themeBackground", "Color de Fondo (Background)", "Ej: 207 88% 94%")}
+                {renderColorInput("themeForeground", "Color de Texto Principal (Foreground)", "Ej: 210 40% 25%")}
+            </div>
+             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {renderColorInput("themePrimary", "Color Primario", "Ej: 207 88% 68%")}
+                {renderColorInput("themeSecondary", "Color Secundario", "Ej: 207 88% 88%")}
+                {renderColorInput("themeAccent", "Color de Acento", "Ej: 124 39% 64%")}
+            </div>
+            <FormDescription>
+              Recarga la página después de guardar para ver los cambios de tema completamente aplicados en toda la interfaz.
+            </FormDescription>
+
+
+            <Separator />
+            
+            {/* Notifications Section */}
             <FormField
               control={form.control}
               name="notificationsEnabled"
@@ -286,7 +340,7 @@ export function GeneralSettingsForm({ currentSettings }: GeneralSettingsFormProp
                   <div className="space-y-0.5">
                     <FormLabel className="text-base">Activar Notificaciones</FormLabel>
                     <FormDescription>
-                      Habilitar alertas y notificaciones administrativas dentro de la plataforma.
+                      Habilitar alertas y notificaciones administrativas (funcionalidad futura).
                     </FormDescription>
                   </div>
                   <FormControl>

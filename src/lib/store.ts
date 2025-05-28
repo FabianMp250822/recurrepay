@@ -20,7 +20,7 @@ const CLIENTS_COLLECTION = 'listapagospendiendes';
 const PAYMENT_HISTORY_SUBCOLLECTION = 'paymentHistory';
 const APP_SETTINGS_COLLECTION = 'appSettings';
 const FINANCING_PLANS_DOC_ID = 'financingPlans';
-const GENERAL_SETTINGS_DOC_ID = 'generalSettings'; // New document ID for general settings
+const GENERAL_SETTINGS_DOC_ID = 'generalSettings'; 
 
 
 // --- Client Operations ---
@@ -37,7 +37,8 @@ export async function getClients(): Promise<Client[]> {
     return clientsList;
   } catch (error: any) {
     console.error("Error fetching clients from Firestore (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
-     if (error.code === 'permission-denied') {
+    if (error.code === 'permission-denied') {
+      // This will make the error more specific when it propagates
       throw new Error("Permiso denegado por Firestore al buscar clientes. Verifique las reglas de seguridad y que los datos del administrador (UID y campo 'activo') sean correctos en la colección 'administradores'.");
     }
     throw new Error(`Error al buscar clientes de Firestore: ${error.message || 'Error desconocido de Firestore'}. Código: ${error.code || 'N/A'}`);
@@ -52,10 +53,9 @@ export async function getClientById(id: string): Promise<Client | undefined> {
       return { id: clientDocSnap.id, ...(clientDocSnap.data() as Omit<Client, 'id'>) };
     }
     return undefined;
-  } catch (error: any)
- {
+  } catch (error: any) {
     console.error("Error fetching client by ID from Firestore (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
-     if (error.code === 'permission-denied') {
+    if (error.code === 'permission-denied') {
       throw new Error(`Permiso denegado por Firestore al buscar cliente por ID '${id}'. Verifique las reglas de seguridad y asegúrese de que el usuario esté autenticado. Si se requieren verificaciones de administrador, verifique el estado del administrador.`);
     }
     throw new Error(`Error al buscar cliente por ID '${id}': ${error.message || 'Error desconocido de Firestore'}`);
@@ -71,7 +71,6 @@ export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ clien
   try {
     const clientsCollectionRef = collection(db, CLIENTS_COLLECTION);
     
-    // Check for existing email before adding
     const emailQuery = query(clientsCollectionRef, where('email', '==', clientData.email));
     const emailQuerySnapshot = await getDocs(emailQuery);
     if (!emailQuerySnapshot.empty) {
@@ -85,9 +84,7 @@ export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ clien
         createdAt: clientData.createdAt || Timestamp.now().toDate().toISOString() 
     };
     
-    // Remove undefined values before saving
     Object.keys(dataToSave).forEach(key => dataToSave[key as keyof typeof dataToSave] === undefined && delete dataToSave[key as keyof typeof dataToSave]);
-
 
     const docRef = await addDoc(clientsCollectionRef, dataToSave);
     return { client: { id: docRef.id, ...dataToSave } as Client };
@@ -95,7 +92,7 @@ export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ clien
     console.error("Error adding client to Firestore (Client SDK) (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     let userMessage = "Error al agregar el cliente. Inténtelo de nuevo.";
     if (error.code === 'permission-denied') {
-         userMessage = "Permiso denegado por Firestore al intentar guardar el cliente. Verifique las reglas de seguridad. Si las operaciones se realizan desde el servidor (ej. Server Actions), el Firebase Client SDK no tendrá un usuario autenticado, causando este error con reglas que requieran autenticación.";
+        userMessage = "Permiso denegado por Firestore al intentar guardar el cliente. Verifique las reglas de seguridad. Si las operaciones se realizan desde el servidor (ej. Server Actions), el Firebase Client SDK no tendrá un usuario autenticado, causando este error con reglas que requieran autenticación.";
     } else if (error.code === 'invalid-argument' || (error instanceof Error && (error.message.includes("undefined") || error.message.includes("NaN") || error.message.toLowerCase().includes("invalid data")))) {
         userMessage = `Error al agregar el cliente: Datos inválidos. Por favor, revise los campos. Detalle: ${error.message}`;
     } else if (error instanceof Error) {
@@ -119,7 +116,6 @@ export async function updateClient(id: string, clientData: Partial<Omit<Client, 
     }
     const originalClientData = { id: clientDocSnap.id, ...clientDocSnap.data() } as Client;
 
-    // Check for email uniqueness if email is being changed
     if (clientData.email && clientData.email !== originalClientData.email) {
       const clientsCollectionRef = collection(db, CLIENTS_COLLECTION);
       const emailQuery = query(clientsCollectionRef, where('email', '==', clientData.email));
@@ -133,9 +129,7 @@ export async function updateClient(id: string, clientData: Partial<Omit<Client, 
     }
     
     const dataToUpdate: Partial<Omit<Client, 'id' | 'createdAt'>> = { ...clientData };
-     // Remove undefined values before saving
     Object.keys(dataToUpdate).forEach(key => dataToUpdate[key as keyof typeof dataToUpdate] === undefined && delete dataToUpdate[key as keyof typeof dataToUpdate]);
-
 
     await updateDoc(clientDocRef, dataToUpdate);
     
@@ -209,8 +203,6 @@ export async function addPaymentToHistory(clientId: string, paymentData: Omit<Pa
 export async function getPaymentHistory(clientId: string): Promise<PaymentRecord[]> {
   if (!db) {
     console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in getPaymentHistory.");
-    // Consider throwing an error or returning a specific error state if db is null.
-    // For now, returning empty array to prevent breaking UI, but this indicates a critical setup issue.
     return [];
   }
   try {
@@ -224,10 +216,9 @@ export async function getPaymentHistory(clientId: string): Promise<PaymentRecord
   } catch (error: any) {
     console.error(`Error fetching payment history for client ${clientId} (Client SDK):`, JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     if (error.code === 'permission-denied') {
-      // This throw will be caught by the calling component (e.g., EditClientPage)
       throw new Error(`Permiso denegado por Firestore al buscar historial de pagos para el cliente ${clientId}. Verifique las reglas de seguridad.`);
     }
-    return []; // Return empty array or rethrow, depending on desired error handling
+    return []; 
   }
 }
 
@@ -254,14 +245,12 @@ export async function getFinancingPlanSettings(): Promise<AppFinancingSettings> 
     const docSnap = await getDoc(settingsDocRef);
     if (docSnap.exists()) {
       const data = docSnap.data() as AppFinancingSettings;
-      // Ensure all default plans are present, merge if necessary
       const mergedPlans = defaultFinancingPlans.plans.map(defaultPlan => {
         const existingPlan = data.plans?.find(p => p.months === defaultPlan.months);
         return existingPlan ? { ...defaultPlan, ...existingPlan, isConfigurable: defaultPlan.isConfigurable } : defaultPlan;
       });
       return { plans: mergedPlans };
     } else {
-      // If document doesn't exist, create it with defaults
       await setDoc(settingsDocRef, defaultFinancingPlans);
       return defaultFinancingPlans;
     }
@@ -294,10 +283,9 @@ export async function saveFinancingPlanSettings(settings: AppFinancingSettings):
   }
 }
 
-// Utility to get financing options in the map format for forms
 export async function getFinancingOptionsMap(): Promise<{ [key: number]: { rate: number; label: string } }> {
     const settings = await getFinancingPlanSettings();
-    if (!settings || !settings.plans) return {}; // Should not happen if defaults are created
+    if (!settings || !settings.plans) return {};
     return settings.plans.reduce((acc, plan) => {
       acc[plan.months] = { rate: plan.rate, label: plan.label };
       return acc;
@@ -308,8 +296,13 @@ export async function getFinancingOptionsMap(): Promise<{ [key: number]: { rate:
 // --- General App Settings Operations ---
 const defaultGeneralSettings: AppGeneralSettings = {
   appName: "RecurPay",
-  appLogoUrl: "", // Default to empty or a placeholder logo if you have one
+  appLogoUrl: "",
   notificationsEnabled: false,
+  themePrimary: "207 88% 68%", // Default HSL for --primary
+  themeSecondary: "207 88% 88%", // Default HSL for --secondary
+  themeAccent: "124 39% 64%", // Default HSL for --accent
+  themeBackground: "207 88% 94%", // Default HSL for --background
+  themeForeground: "210 40% 25%", // Default HSL for --foreground
 };
 
 export async function getGeneralSettings(): Promise<AppGeneralSettings> {
@@ -321,9 +314,10 @@ export async function getGeneralSettings(): Promise<AppGeneralSettings> {
     const settingsDocRef = doc(db, APP_SETTINGS_COLLECTION, GENERAL_SETTINGS_DOC_ID);
     const docSnap = await getDoc(settingsDocRef);
     if (docSnap.exists()) {
-      return { ...defaultGeneralSettings, ...docSnap.data() } as AppGeneralSettings;
+      // Merge fetched data with defaults to ensure all keys are present
+      const fetchedData = docSnap.data();
+      return { ...defaultGeneralSettings, ...fetchedData } as AppGeneralSettings;
     } else {
-      // If document doesn't exist, create it with defaults
       await setDoc(settingsDocRef, defaultGeneralSettings);
       return defaultGeneralSettings;
     }
@@ -337,19 +331,27 @@ export async function getGeneralSettings(): Promise<AppGeneralSettings> {
   }
 }
 
-export async function saveGeneralSettings(settings: AppGeneralSettings): Promise<{ success: boolean, error?: string }> {
+export async function saveGeneralSettings(settings: Partial<AppGeneralSettings>): Promise<{ success: boolean, error?: string }> {
   if (!db) {
     console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in saveGeneralSettings.");
     return { success: false, error: "Error de la aplicación: La conexión con la base de datos no está inicializada." };
   }
   try {
     const settingsDocRef = doc(db, APP_SETTINGS_COLLECTION, GENERAL_SETTINGS_DOC_ID);
-    // Ensure undefined fields are not saved, or explicitly convert them if necessary
-    const settingsToSave = {
-        appName: settings.appName || defaultGeneralSettings.appName,
-        appLogoUrl: settings.appLogoUrl || defaultGeneralSettings.appLogoUrl, // Keep existing if new one is empty/undefined
+    
+    const settingsToSave: Partial<AppGeneralSettings> = {
+        appName: settings.appName !== undefined ? settings.appName : defaultGeneralSettings.appName,
+        appLogoUrl: settings.appLogoUrl !== undefined ? settings.appLogoUrl : defaultGeneralSettings.appLogoUrl,
         notificationsEnabled: typeof settings.notificationsEnabled === 'boolean' ? settings.notificationsEnabled : defaultGeneralSettings.notificationsEnabled,
+        themePrimary: settings.themePrimary !== undefined ? settings.themePrimary : defaultGeneralSettings.themePrimary,
+        themeSecondary: settings.themeSecondary !== undefined ? settings.themeSecondary : defaultGeneralSettings.themeSecondary,
+        themeAccent: settings.themeAccent !== undefined ? settings.themeAccent : defaultGeneralSettings.themeAccent,
+        themeBackground: settings.themeBackground !== undefined ? settings.themeBackground : defaultGeneralSettings.themeBackground,
+        themeForeground: settings.themeForeground !== undefined ? settings.themeForeground : defaultGeneralSettings.themeForeground,
     };
+    // Remove any undefined properties from settingsToSave to avoid Firestore errors with undefined values
+    Object.keys(settingsToSave).forEach(key => (settingsToSave as any)[key] === undefined && delete (settingsToSave as any)[key]);
+
     await setDoc(settingsDocRef, settingsToSave, { merge: true });
     return { success: true };
   } catch (error: any) {
@@ -357,6 +359,8 @@ export async function saveGeneralSettings(settings: AppGeneralSettings): Promise
     let userMessage = "Error al guardar la configuración general.";
     if (error.code === 'permission-denied') {
       userMessage = "Permiso denegado por Firestore al guardar la configuración general.";
+    } else if (error.message && error.message.includes("undefined")) {
+        userMessage = "Error al guardar la configuración: se intentó guardar un valor indefinido. Por favor, revise los campos.";
     }
     return { success: false, error: userMessage };
   }

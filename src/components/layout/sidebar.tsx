@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/contexts/AuthContext';
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { fetchGeneralSettingsAction } from '@/app/actions/settingsActions';
 import type { AppGeneralSettings } from '@/types';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -18,7 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 const navItems = [
   { href: '/dashboard', label: 'Panel de Analíticas', icon: BarChart3 },
   { href: '/clients', label: 'Clientes', icon: Users },
-  { href: '/clients/new', label: 'Agregar Cliente', icon: Users },
+  { href: '/clients/new', label: 'Agregar Cliente', icon: Users }, // Consider if this should be a sub-item or less prominent
   { href: '/settings', label: 'Configuración', icon: SettingsIcon },
 ];
 
@@ -31,7 +31,7 @@ export function AppSidebar() {
 
   useEffect(() => {
     async function loadGeneralSettings() {
-      if (isAdmin && user) { // Ensure user is admin before fetching
+      if (initialLoadComplete && isAdmin && user) { // Ensure user is admin before fetching
         setIsLoadingSettings(true);
         try {
           const settings: AppGeneralSettings = await fetchGeneralSettingsAction();
@@ -41,22 +41,18 @@ export function AppSidebar() {
           }
         } catch (error) {
           console.error("Error fetching general settings for sidebar:", error);
-          // Keep default RecurPay name and no logo on error
           setAppName('RecurPay');
           setAppLogoUrl(null);
         } finally {
           setIsLoadingSettings(false);
         }
-      } else {
-         // Not admin or no user, or auth not complete yet
-        setAppName('RecurPay'); // Set defaults if not admin/user
+      } else if (initialLoadComplete) { // Auth is complete, but user is not admin or not logged in
+        setAppName('RecurPay'); 
         setAppLogoUrl(null);
         setIsLoadingSettings(false); 
       }
     }
-    if (initialLoadComplete) { // Only fetch after auth state is known
-      loadGeneralSettings();
-    }
+    loadGeneralSettings();
   }, [isAdmin, user, initialLoadComplete]);
 
 
@@ -69,17 +65,27 @@ export function AppSidebar() {
       <div className="flex h-16 items-center px-6 border-b border-sidebar-border">
         <Link href="/dashboard" className="flex items-center gap-2 font-semibold text-lg text-sidebar-primary">
           {isLoadingSettings ? (
-            <Skeleton className="h-6 w-6 rounded-sm bg-sidebar-accent/50" />
+            <>
+              <Skeleton className="h-8 w-8 rounded-sm bg-sidebar-accent/50" />
+              <Skeleton className="h-5 w-24 bg-sidebar-accent/50" />
+            </>
           ) : appLogoUrl ? (
-            <Image src={appLogoUrl} alt="Logo de la Aplicación" width={24} height={24} className="h-6 w-6 object-contain" unoptimized />
+            <Image src={appLogoUrl} alt="Logo de la Aplicación" width={32} height={32} className="h-8 w-auto max-w-[180px] object-contain" unoptimized />
+            // No appName text if logo exists
           ) : (
-            <CreditCard className="h-6 w-6 text-primary" />
+            <>
+              <CreditCard className="h-6 w-6 text-primary" />
+              <span>{appName}</span>
+            </>
           )}
-          <span>{isLoadingSettings ? <Skeleton className="h-5 w-24 bg-sidebar-accent/50" /> : appName}</span>
         </Link>
       </div>
       <nav className="flex-1 overflow-y-auto p-4 space-y-1">
         {navItems.map((item) => {
+          // Hide "Agregar Cliente" from main nav if it's better suited as a button on /clients page
+          if (item.href === '/clients/new' && pathname !== '/clients/new') {
+             // return null; // Option to hide it from general nav
+          }
           const isActive = pathname.startsWith(item.href) && (item.href !== '/' || pathname === '/');
           
           return (
@@ -106,10 +112,10 @@ export function AppSidebar() {
         <div className="flex items-center gap-3">
           <Avatar className="h-9 w-9">
             <AvatarImage src="https://placehold.co/40x40.png" alt="Avatar de Usuario" data-ai-hint="user avatar" />
-            <AvatarFallback>{user.email ? user.email.substring(0,2).toUpperCase() : 'AD'}</AvatarFallback>
+            <AvatarFallback>{user?.email ? user.email.substring(0,2).toUpperCase() : 'AD'}</AvatarFallback>
           </Avatar>
           <div>
-            <p className="text-sm font-medium truncate" title={user.email || 'Usuario Administrador'}>{user.email || 'Usuario Administrador'}</p>
+            <p className="text-sm font-medium truncate" title={user?.email || 'Usuario Administrador'}>{user?.email || 'Usuario Administrador'}</p>
             <p className="text-xs text-muted-foreground">Administrador</p>
           </div>
         </div>

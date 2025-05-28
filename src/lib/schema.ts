@@ -84,9 +84,21 @@ export const financingSettingsSchema = z.object({
   plans: z.array(financingPlanSettingSchema),
 });
 
+// Helper for HSL color string validation (e.g., "207 88% 68%")
+const hslColorString = z.string()
+  .regex(/^\d{1,3}\s\d{1,3}%\s\d{1,3}%$/, "El formato debe ser 'H S% L%' (ej: 207 88% 68%)")
+  .optional()
+  .or(z.literal(''));
+
 // Schema for general app settings
 export const generalSettingsSchema = z.object({
   appName: z.string().min(1, "El nombre de la aplicación es obligatorio.").max(50, "El nombre no puede exceder 50 caracteres.").optional().or(z.literal('')),
   appLogoUrl: z.string().url("Debe ser una URL válida.").optional().or(z.literal('')), // URL will be set after upload
   notificationsEnabled: z.boolean().optional(),
+  // Theme colors as HSL strings
+  themePrimary: hslColorString,
+  themeSecondary: hslColorString,
+  themeAccent: hslColorString,
+  themeBackground: hslColorString,
+  themeForeground: hslColorString,
 });
