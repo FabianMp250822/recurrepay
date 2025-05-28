@@ -2,7 +2,7 @@
 'use client'; 
 
 import Link from 'next/link';
-import { PlusCircle, Edit3, Users as UsersIconLucide, FileText, DollarSign, Link as LinkIconLucide, Loader2, Terminal, CreditCard as CreditCardIcon, Mail } from 'lucide-react';
+import { PlusCircle, Edit3, Users as UsersIconLucide, FileText, DollarSign, Link as LinkIconLucide, Loader2, Terminal, CreditCard as CreditCardIcon, Mail, CheckCircle } from 'lucide-react';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import {
@@ -27,6 +27,7 @@ import { getClients } from '@/lib/store';
 import { formatDate, formatCurrency, getDaysUntilDue } from '@/lib/utils';
 import DeleteClientDialog from '@/components/clients/delete-client-dialog';
 import SendReminderButton from '@/components/clients/SendReminderButton';
+import RegisterPaymentButton from '@/components/clients/RegisterPaymentButton'; // Import new component
 import type { Client } from '@/types';
 import {
   Tooltip,
@@ -91,8 +92,11 @@ export default function ClientsListPage() {
   }, [clients, searchTerm]);
 
 
-  function getPaymentStatusBadge(nextPaymentDate: string): React.ReactElement {
-    const daysUntil = getDaysUntilDue(nextPaymentDate);
+  function getPaymentStatusBadge(client: Client): React.ReactElement {
+    if (client.status === 'completed' || client.paymentAmount === 0) {
+      return <Badge variant="default" className="bg-green-600 hover:bg-green-700">Completado</Badge>;
+    }
+    const daysUntil = getDaysUntilDue(client.nextPaymentDate);
     if (daysUntil < 0) {
       return <Badge variant="destructive">Vencido</Badge>;
     }
@@ -244,7 +248,7 @@ export default function ClientsListPage() {
                   <TableCell className="hidden sm:table-cell">
                     {client.financingPlan && client.financingPlan !== 0 && FINANCING_OPTIONS[client.financingPlan]
                       ? FINANCING_OPTIONS[client.financingPlan].label
-                      : client.contractValue && client.contractValue > 0 ? <span className="text-muted-foreground">Pago único</span> : <span className="text-muted-foreground">N/A</span>}
+                      : client.contractValue && client.contractValue > 0 && client.paymentAmount === 0 ? <span className="text-muted-foreground">Pago único</span> : <span className="text-muted-foreground">N/A</span>}
                   </TableCell>
                   <TableCell className="hidden lg:table-cell">
                     <div className="flex flex-col gap-1 text-xs">
@@ -261,12 +265,13 @@ export default function ClientsListPage() {
                        {(!client.acceptanceLetterUrl && !client.contractFileUrl) && <span className="text-muted-foreground">-</span>}
                     </div>
                   </TableCell>
-                  <TableCell className="hidden sm:table-cell">{formatDate(client.nextPaymentDate)}</TableCell>
+                  <TableCell className="hidden sm:table-cell">{client.paymentAmount > 0 ? formatDate(client.nextPaymentDate) : '-'}</TableCell>
                   <TableCell className="hidden sm:table-cell text-center">
-                    {client.paymentAmount > 0 ? getPaymentStatusBadge(client.nextPaymentDate) : <Badge variant="outline">Completado</Badge>}
+                    {getPaymentStatusBadge(client)}
                   </TableCell>
                   <TableCell className="text-right">
-                    <div className="flex gap-2 justify-end">
+                    <div className="flex gap-1 sm:gap-2 justify-end">
+                      {client.paymentAmount > 0 && client.status === 'active' && <RegisterPaymentButton client={client} />}
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -282,7 +287,7 @@ export default function ClientsListPage() {
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
-                      {client.paymentAmount > 0 && <SendReminderButton client={client} />}
+                      {client.paymentAmount > 0 && client.status === 'active' && <SendReminderButton client={client} />}
                       <DeleteClientDialog clientId={client.id} clientName={`${client.firstName} ${client.lastName}`} />
                     </div>
                   </TableCell>
@@ -301,3 +306,4 @@ export default function ClientsListPage() {
     </AppLayout>
   );
 }
+

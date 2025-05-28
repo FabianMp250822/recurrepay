@@ -6,9 +6,10 @@ import { z } from 'zod';
 import nodemailer from 'nodemailer';
 import { clientSchema } from '@/lib/schema';
 import * as store from '@/lib/store';
-import type { Client, ClientFormData } from '@/types';
-import { formatCurrency, formatDate, calculateNextPaymentDate } from '@/lib/utils';
+import type { Client, ClientFormData, PaymentRecord } from '@/types';
+import { formatCurrency, formatDate, calculateNextPaymentDate as calculateNextRegPaymentDateUtil } from '@/lib/utils';
 import { IVA_RATE, FINANCING_OPTIONS } from '@/lib/constants';
+import { addMonths, setDate, getDate, getDaysInMonth } from 'date-fns';
 
 // Helper function to calculate financing details
 function calculateFinancingDetails(formData: ClientFormData): Partial<Client> {
@@ -33,6 +34,8 @@ function calculateFinancingDetails(formData: ClientFormData): Partial<Client> {
     acceptanceLetterFileName: formData.acceptanceLetterFileName,
     contractFileUrl: formData.contractFileUrl,
     contractFileName: formData.contractFileName,
+    paymentsMadeCount: 0, // Initialize for new clients
+    status: 'active',
   };
 
   let calculatedPaymentAmount = formData.paymentAmount || 0;
@@ -53,16 +56,21 @@ function calculateFinancingDetails(formData: ClientFormData): Partial<Client> {
         const numberOfMonths = financingPlanKey;
         calculatedPaymentAmount = numberOfMonths > 0 ? parseFloat((details.totalAmountWithInterest / numberOfMonths).toFixed(2)) : 0;
       }
-    } else if (details.amountToFinance === 0 && financingPlanKey !== 0) {
-      calculatedPaymentAmount = 0; // Fully paid by down payment
+    } else if (details.amountToFinance === 0 && financingPlanKey !== 0) { // Paid in full by down payment
+      calculatedPaymentAmount = 0; 
+      details.status = 'completed';
     } else if (financingPlanKey === 0) { // No financing plan
-        // paymentAmount must be provided by user for contractValue > 0 and no financing
-        // This should be validated by schema already.
         calculatedPaymentAmount = formData.paymentAmount || 0;
+        if (calculatedPaymentAmount === 0 && details.amountToFinance === 0) { // Contract paid by downpayment, no recurring
+             details.status = 'completed';
+        }
     }
   } else { // No contract value (e.g. simple recurring service)
-    details.downPayment = 0; // No down payment if no contract value
+    details.downPayment = 0; 
     calculatedPaymentAmount = formData.paymentAmount || 0;
+    if (calculatedPaymentAmount === 0) {
+        details.status = 'completed'; // Or maybe 'inactive' if no payment amount for simple service
+    }
   }
   
   details.paymentAmount = calculatedPaymentAmount;
@@ -80,11 +88,13 @@ export async function createClientAction(formData: ClientFormData) {
   const financingDetails = calculateFinancingDetails(validatedData);
 
   const clientToCreate = {
-    ...validatedData, // includes form fields like firstName, email, etc. AND file URLs/names if uploaded
-    ...financingDetails, // includes calculated financial fields like ivaAmount, downPayment (monetary), paymentAmount (monthly installment)
+    ...validatedData, 
+    ...financingDetails, 
     paymentAmount: financingDetails.paymentAmount!, 
-    nextPaymentDate: calculateNextPaymentDate(validatedData.paymentDayOfMonth).toISOString(),
+    nextPaymentDate: calculateNextRegPaymentDateUtil(validatedData.paymentDayOfMonth).toISOString(),
     createdAt: new Date().toISOString(),
+    paymentsMadeCount: 0, // Explicitly set for new clients
+    status: financingDetails.status || 'active',
   };
   // Remove undefined values that Zod might have set from optional fields if they were empty
   Object.keys(clientToCreate).forEach(key => clientToCreate[key as keyof typeof clientToCreate] === undefined && delete clientToCreate[key as keyof typeof clientToCreate]);
@@ -95,6 +105,7 @@ export async function createClientAction(formData: ClientFormData) {
     return { success: false, generalError: result.error };
   }
 
+  revalidatePath('/clients');
   revalidatePath('/dashboard');
   return { success: true, client: result.client };
 }
@@ -106,36 +117,110 @@ export async function updateClientAction(id: string, formData: ClientFormData) {
   }
   
   const validatedData = validationResult.data;
+  // Fetch existing client to preserve fields like paymentsMadeCount if not part of form
+  const existingClient = await store.getClientById(id);
+  if (!existingClient) {
+    return { success: false, generalError: "Cliente no encontrado." };
+  }
+
   const financingDetails = calculateFinancingDetails(validatedData);
 
   const clientToUpdate = {
     ...validatedData,
     ...financingDetails,
     paymentAmount: financingDetails.paymentAmount!,
-    nextPaymentDate: calculateNextPaymentDate(validatedData.paymentDayOfMonth).toISOString(),
+    nextPaymentDate: calculateNextRegPaymentDateUtil(validatedData.paymentDayOfMonth).toISOString(),
+    // Preserve existing tracking fields if not directly modified by this form's logic
+    paymentsMadeCount: existingClient.paymentsMadeCount, 
+    status: financingDetails.status || existingClient.status || 'active',
   };
   Object.keys(clientToUpdate).forEach(key => clientToUpdate[key as keyof typeof clientToUpdate] === undefined && delete clientToUpdate[key as keyof typeof clientToUpdate]);
 
 
-  const result = await store.updateClient(id, clientToUpdate as Omit<Client, 'id' | 'createdAt'>);
+  const result = await store.updateClient(id, clientToUpdate as Partial<Omit<Client, 'id' | 'createdAt'>>);
   if (result.error) {
     return { success: false, generalError: result.error };
   }
   
-  revalidatePath('/dashboard');
+  revalidatePath('/clients');
   revalidatePath(`/clients/${id}/edit`);
+  revalidatePath('/dashboard');
   return { success: true, client: result.client };
 }
 
 export async function deleteClientAction(id: string) {
   // TODO: Consider deleting associated files from Firebase Storage
+  // TODO: Consider deleting paymentHistory subcollection
   const result = await store.deleteClient(id);
   if (result.error) {
     return { success: false, error: result.error };
   }
+  revalidatePath('/clients');
   revalidatePath('/dashboard');
   return { success: true };
 }
+
+export async function registerPaymentAction(clientId: string) {
+  const client = await store.getClientById(clientId);
+  if (!client) {
+    return { success: false, error: "Cliente no encontrado." };
+  }
+
+  if (client.paymentAmount === 0 && client.status === 'completed') {
+    return { success: false, error: "Este cliente ya ha completado todos sus pagos." };
+  }
+  if (client.paymentAmount === 0) {
+     return { success: false, error: "Este cliente no tiene un monto de pago configurado." };
+  }
+
+
+  const paymentAmountRecorded = client.paymentAmount;
+  const paymentDate = new Date().toISOString();
+
+  const paymentRecord: Omit<PaymentRecord, 'id' | 'recordedAt'> = {
+    paymentDate: paymentDate,
+    amountPaid: paymentAmountRecorded,
+    // paymentMethod: client.paymentMethod, // Or a new field for this specific payment
+  };
+
+  const historyResult = await store.addPaymentToHistory(clientId, paymentRecord);
+  if (historyResult.error) {
+    return { success: false, error: `Error al guardar en historial: ${historyResult.error}` };
+  }
+
+  let newPaymentsMadeCount = (client.paymentsMadeCount || 0) + 1;
+  let newNextPaymentDate = new Date(client.nextPaymentDate);
+  newNextPaymentDate = addMonths(newNextPaymentDate, 1);
+  
+  // Adjust day if new month has fewer days
+  const targetDay = client.paymentDayOfMonth;
+  const daysInNewMonth = getDaysInMonth(newNextPaymentDate);
+  newNextPaymentDate = setDate(newNextPaymentDate, Math.min(targetDay, daysInNewMonth));
+
+  const updates: Partial<Client> = {
+    nextPaymentDate: newNextPaymentDate.toISOString(),
+    paymentsMadeCount: newPaymentsMadeCount,
+  };
+
+  if (client.financingPlan && client.financingPlan > 0 && newPaymentsMadeCount >= client.financingPlan) {
+    updates.paymentAmount = 0;
+    updates.status = 'completed';
+    // Optional: Clear nextPaymentDate or set to a far future date if contract is fully paid
+    // updates.nextPaymentDate = undefined; // Or some indicator
+  }
+
+  const updateResult = await store.updateClient(clientId, updates);
+  if (updateResult.error) {
+    // Potentially rollback payment history record or log inconsistency
+    return { success: false, error: `Error al actualizar cliente: ${updateResult.error}` };
+  }
+
+  revalidatePath('/clients');
+  revalidatePath('/dashboard');
+  revalidatePath(`/clients/${clientId}/edit`); 
+  return { success: true, message: "Pago registrado y cliente actualizado." };
+}
+
 
 export async function sendPaymentReminderEmailAction(client: Client) {
   const {
@@ -160,7 +245,7 @@ export async function sendPaymentReminderEmailAction(client: Client) {
       pass: EMAIL_SERVER_PASSWORD,
     },
     tls: {
-      // rejectUnauthorized: false // Use con precaución, solo para desarrollo si es necesario
+      // rejectUnauthorized: false 
     }
   });
   
@@ -226,3 +311,4 @@ export async function sendPaymentReminderEmailAction(client: Client) {
     return { success: false, error: errorMessage };
   }
 }
+

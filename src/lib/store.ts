@@ -1,5 +1,5 @@
 
-import type { Client } from '@/types';
+import type { Client, PaymentRecord } from '@/types';
 import { db } from '@/lib/firebase'; // Client SDK for all operations now
 import {
   collection,
@@ -12,10 +12,14 @@ import {
   query as queryClient,
   orderBy as orderByClient,
   where as whereClient,
-  Timestamp // For createdAt
+  Timestamp,
+  writeBatch,
+  serverTimestamp
 } from 'firebase/firestore';
 
 const CLIENTS_COLLECTION = 'listapagospendiendes';
+const PAYMENT_HISTORY_SUBCOLLECTION = 'paymentHistory';
+
 
 // READ operations use the Client SDK (db)
 export async function getClients(): Promise<Client[]> {
@@ -30,8 +34,8 @@ export async function getClients(): Promise<Client[]> {
     return clientsList;
   } catch (error: any) {
     console.error("Error fetching clients from Firestore (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
-    if (error.code === 'permission-denied') {
-      throw new Error("Permiso denegado por Firestore al buscar clientes. Asegúrese de que las reglas de seguridad de Firebase permitan el acceso de lectura a la colección 'listapagospendiendes' para administradores autenticados y activos, y que su cuenta de administrador esté configurada correctamente con el estado 'activo: true'.");
+     if (error.code === 'permission-denied') {
+      throw new Error("Permiso denegado por Firestore al buscar clientes. Verifique las reglas de seguridad.");
     }
     throw new Error(`Error al buscar clientes de Firestore: ${error.message || 'Error desconocido de Firestore'}. Código: ${error.code || 'N/A'}`);
   }
@@ -45,7 +49,8 @@ export async function getClientById(id: string): Promise<Client | undefined> {
       return { id: clientDocSnap.id, ...(clientDocSnap.data() as Omit<Client, 'id'>) };
     }
     return undefined;
-  } catch (error: any) {
+  } catch (error: any)
+ {
     console.error("Error fetching client by ID from Firestore (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
      if (error.code === 'permission-denied') {
       throw new Error(`Permiso denegado por Firestore al buscar cliente por ID '${id}'. Verifique las reglas de seguridad y asegúrese de que el usuario esté autenticado. Si se requieren verificaciones de administrador, verifique el estado del administrador.`);
@@ -56,19 +61,23 @@ export async function getClientById(id: string): Promise<Client | undefined> {
 
 // WRITE operations now also use the Client SDK (db)
 export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ client?: Client, error?: string }> {
+   if (!db) {
+    console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in addClient. Firebase may not be initialized correctly on the client-side or the import is failing.");
+    return { error: "Error de la aplicación: La conexión con la base de datos no está inicializada. Contacte al administrador." };
+  }
   try {
     const clientsCollectionRef = collection(db, CLIENTS_COLLECTION);
     
-    // Check for duplicate email
     const emailQuery = queryClient(clientsCollectionRef, whereClient('email', '==', clientData.email));
     const emailQuerySnapshot = await getDocsClient(emailQuery);
     if (!emailQuerySnapshot.empty) {
       return { error: "La dirección de correo electrónico ya existe para otro cliente." };
     }
 
-    // Add createdAt timestamp if it's not already part of clientData (it should be set by clientActions)
     const dataToSave = {
         ...clientData,
+        paymentsMadeCount: clientData.paymentsMadeCount || 0,
+        status: clientData.status || 'active',
         createdAt: clientData.createdAt || Timestamp.now().toDate().toISOString() 
     };
 
@@ -90,7 +99,11 @@ export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ clien
   }
 }
 
-export async function updateClient(id: string, clientData: Omit<Client, 'id' | 'createdAt'>): Promise<{ client?: Client, error?: string }> {
+export async function updateClient(id: string, clientData: Partial<Omit<Client, 'id'>>): Promise<{ client?: Client, error?: string }> {
+   if (!db) {
+    console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in updateClient. Firebase may not be initialized correctly on the client-side or the import is failing.");
+    return { error: "Error de la aplicación: La conexión con la base de datos no está inicializada. Contacte al administrador." };
+  }
   try {
     const clientDocRef = docClient(db, CLIENTS_COLLECTION, id);
     const clientDocSnap = await getDocClient(clientDocRef);
@@ -99,7 +112,7 @@ export async function updateClient(id: string, clientData: Omit<Client, 'id' | '
       return { error: "Cliente no encontrado." };
     }
 
-    const originalClientData = clientDocSnap.data() as Client;
+    const originalClientData = { id: clientDocSnap.id, ...clientDocSnap.data() } as Client;
 
     if (clientData.email && clientData.email !== originalClientData.email) {
       const clientsCollectionRef = collection(db, CLIENTS_COLLECTION);
@@ -113,41 +126,16 @@ export async function updateClient(id: string, clientData: Omit<Client, 'id' | '
       }
     }
     
-    const dataToUpdate = {
-        ...clientData,
-        // Ensure createdAt is preserved if it existed or set if it's a full update from partial data
-        createdAt: originalClientData.createdAt || Timestamp.now().toDate().toISOString() 
+    // Ensure all fields that could be partial are handled correctly
+    // by merging with original data.
+    const dataToUpdate: Partial<Client> = {
+      ...clientData, // incoming partial data
     };
 
     await updateDocClient(clientDocRef, dataToUpdate);
-    // Construct the full client object to return
-    const updatedClient : Client = { 
-        id: id, 
-        firstName: dataToUpdate.firstName ?? originalClientData.firstName,
-        lastName: dataToUpdate.lastName ?? originalClientData.lastName,
-        email: dataToUpdate.email ?? originalClientData.email,
-        phoneNumber: dataToUpdate.phoneNumber ?? originalClientData.phoneNumber,
-        contractValue: dataToUpdate.contractValue ?? originalClientData.contractValue,
-        ivaRate: dataToUpdate.ivaRate ?? originalClientData.ivaRate,
-        ivaAmount: dataToUpdate.ivaAmount ?? originalClientData.ivaAmount,
-        totalWithIva: dataToUpdate.totalWithIva ?? originalClientData.totalWithIva,
-        downPaymentPercentage: dataToUpdate.downPaymentPercentage ?? originalClientData.downPaymentPercentage,
-        downPayment: dataToUpdate.downPayment ?? originalClientData.downPayment,
-        amountToFinance: dataToUpdate.amountToFinance ?? originalClientData.amountToFinance,
-        paymentMethod: dataToUpdate.paymentMethod ?? originalClientData.paymentMethod,
-        financingPlan: dataToUpdate.financingPlan ?? originalClientData.financingPlan,
-        financingInterestRateApplied: dataToUpdate.financingInterestRateApplied ?? originalClientData.financingInterestRateApplied,
-        financingInterestAmount: dataToUpdate.financingInterestAmount ?? originalClientData.financingInterestAmount,
-        totalAmountWithInterest: dataToUpdate.totalAmountWithInterest ?? originalClientData.totalAmountWithInterest,
-        paymentAmount: dataToUpdate.paymentAmount ?? originalClientData.paymentAmount,
-        paymentDayOfMonth: dataToUpdate.paymentDayOfMonth ?? originalClientData.paymentDayOfMonth,
-        nextPaymentDate: dataToUpdate.nextPaymentDate ?? originalClientData.nextPaymentDate,
-        createdAt: originalClientData.createdAt, // always preserve original
-        acceptanceLetterUrl: dataToUpdate.acceptanceLetterUrl ?? originalClientData.acceptanceLetterUrl,
-        acceptanceLetterFileName: dataToUpdate.acceptanceLetterFileName ?? originalClientData.acceptanceLetterFileName,
-        contractFileUrl: dataToUpdate.contractFileUrl ?? originalClientData.contractFileUrl,
-        contractFileName: dataToUpdate.contractFileName ?? originalClientData.contractFileName,
-    };
+    
+    const updatedClientSnapshot = await getDocClient(clientDocRef);
+    const updatedClient = { id: updatedClientSnapshot.id, ...updatedClientSnapshot.data() } as Client;
 
     return { client: updatedClient };
 
@@ -168,9 +156,15 @@ export async function updateClient(id: string, clientData: Omit<Client, 'id' | '
 }
 
 export async function deleteClient(id: string): Promise<{ success?: boolean, error?: string }> {
+   if (!db) {
+    console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in deleteClient. Firebase may not be initialized correctly on the client-side or the import is failing.");
+    return { error: "Error de la aplicación: La conexión con la base de datos no está inicializada. Contacte al administrador." };
+  }
   try {
     const clientDocRef = docClient(db, CLIENTS_COLLECTION, id);
     await deleteDocClient(clientDocRef);
+    // Optionally, delete paymentHistory subcollection if needed, but this requires more complex logic
+    // For now, we only delete the client document.
     return { success: true };
   } catch (error: any) {
     console.error("Error deleting client from Firestore (Client SDK) (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
@@ -183,3 +177,49 @@ export async function deleteClient(id: string): Promise<{ success?: boolean, err
     return { error: userMessage };
   }
 }
+
+export async function addPaymentToHistory(clientId: string, paymentData: Omit<PaymentRecord, 'id' | 'recordedAt'>): Promise<{ record?: PaymentRecord, error?: string }> {
+  if (!db) {
+    console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in addPaymentToHistory.");
+    return { error: "Error de la aplicación: La conexión con la base de datos no está inicializada." };
+  }
+  try {
+    const historyCollectionRef = collection(db, CLIENTS_COLLECTION, clientId, PAYMENT_HISTORY_SUBCOLLECTION);
+    const dataToSave = {
+      ...paymentData,
+      recordedAt: Timestamp.now().toDate().toISOString(),
+    };
+    const docRef = await addDocClient(historyCollectionRef, dataToSave);
+    return { record: { id: docRef.id, ...dataToSave } };
+  } catch (error: any) {
+    console.error(`Error adding payment to history for client ${clientId} (Client SDK):`, JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    let userMessage = "Error al registrar el pago en el historial.";
+    if (error.code === 'permission-denied') {
+      userMessage = "Permiso denegado por Firestore al registrar el pago en el historial. Verifique las reglas de seguridad.";
+    } else if (error instanceof Error) {
+      userMessage = `Error al registrar pago en historial: ${error.message}`;
+    }
+    return { error: userMessage };
+  }
+}
+
+export async function getPaymentHistory(clientId: string): Promise<PaymentRecord[]> {
+  if (!db) {
+    console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in getPaymentHistory.");
+    return []; // Or throw an error
+  }
+  try {
+    const historyCollectionRef = collection(db, CLIENTS_COLLECTION, clientId, PAYMENT_HISTORY_SUBCOLLECTION);
+    const q = queryClient(historyCollectionRef, orderByClient('paymentDate', 'desc'));
+    const querySnapshot = await getDocsClient(q);
+    return querySnapshot.docs.map(docSnap => ({
+      id: docSnap.id,
+      ...(docSnap.data() as Omit<PaymentRecord, 'id'>)
+    }));
+  } catch (error: any) {
+    console.error(`Error fetching payment history for client ${clientId} (Client SDK):`, JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    // Depending on how you want to handle this, you could throw or return empty array with a console warning
+    return [];
+  }
+}
+
