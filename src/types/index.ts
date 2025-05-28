@@ -76,3 +76,16 @@ export type ClientFormData = {
 };
 
 export type AppUser = FirebaseUser;
+
+// Settings
+export interface FinancingPlanSetting {
+  months: number;
+  label: string;
+  rate: number; // Interest rate (e.g., 0.05 for 5%)
+  isDefault?: boolean; // To identify the "Sin financiación" option
+  isConfigurable?: boolean; // To identify if the rate can be configured in UI
+}
+
+export interface AppFinancingSettings {
+  plans: FinancingPlanSetting[];
+}

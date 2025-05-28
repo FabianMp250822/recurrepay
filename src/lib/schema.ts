@@ -1,8 +1,8 @@
 
 import { z } from 'zod';
-import { FINANCING_OPTIONS } from './constants';
+import { FINANCING_OPTIONS } from './constants'; // Will be phased out or re-purposed
 
-const planKeys = Object.keys(FINANCING_OPTIONS).map(Number);
+// const planKeys = Object.keys(FINANCING_OPTIONS).map(Number); // Will be dynamic
 
 export const clientSchema = z.object({
   firstName: z.string().min(1, { message: "El nombre es obligatorio." }).max(50, { message: "El nombre debe tener 50 caracteres o menos." }),
@@ -19,9 +19,11 @@ export const clientSchema = z.object({
     z.number().min(0, "El porcentaje no puede ser negativo.").max(100, "El porcentaje no puede exceder 100.").optional()
   ),
   paymentMethod: z.string().optional().or(z.literal('')),
-  financingPlan: z.coerce.number().refine(val => planKeys.includes(val), {
-    message: "Seleccione un plan de financiación válido.",
-  }).optional().or(z.literal(0)),
+  financingPlan: z.coerce.number()
+    // .refine(val => planKeys.includes(val), { // Validation will adapt to dynamic plans
+    //   message: "Seleccione un plan de financiación válido.",
+    // })
+    .optional().or(z.literal(0)),
   
   paymentDayOfMonth: z.coerce.number().int().min(1, { message: "El día debe estar entre 1 y 31." }).max(31, { message: "El día debe estar entre 1 y 31." }),
 
@@ -58,4 +60,22 @@ export const clientSchema = z.object({
 }, {
     message: "Se requiere un monto de pago recurrente si no hay financiación o valor de contrato.",
     path: ["paymentAmount"],
+});
+
+
+// Schema for individual financing plan setting
+export const financingPlanSettingSchema = z.object({
+  months: z.number().int(),
+  label: z.string().min(1, "La etiqueta es requerida."),
+  rate: z.preprocess(
+    (val) => (val === "" || val === null || val === undefined ? 0 : parseFloat(String(val))),
+    z.number().min(0, "La tasa no puede ser negativa.").max(1, "La tasa debe ser un decimal entre 0 y 1 (ej. 0.05 para 5%).")
+  ),
+  isDefault: z.boolean().optional(),
+  isConfigurable: z.boolean().optional(),
+});
+
+// Schema for the form that edits multiple financing plan settings
+export const financingSettingsSchema = z.object({
+  plans: z.array(financingPlanSettingSchema),
 });

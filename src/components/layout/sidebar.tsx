@@ -3,16 +3,17 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Users, LogOut, CreditCard, BarChart3 } from 'lucide-react'; // Added BarChart3 for Analytics
+import { LayoutDashboard, Users, LogOut, CreditCard, BarChart3, SettingsIcon } from 'lucide-react'; // Added SettingsIcon
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/contexts/AuthContext';
 
 const navItems = [
-  { href: '/dashboard', label: 'Panel de Analíticas', icon: BarChart3 }, // Changed from LayoutDashboard
-  { href: '/clients', label: 'Clientes', icon: Users }, // New link for client list
+  { href: '/dashboard', label: 'Panel de Analíticas', icon: BarChart3 },
+  { href: '/clients', label: 'Clientes', icon: Users },
   { href: '/clients/new', label: 'Agregar Cliente', icon: Users },
+  { href: '/settings', label: 'Configuración', icon: SettingsIcon }, // New settings link
 ];
 
 export function AppSidebar() {
@@ -33,18 +34,8 @@ export function AppSidebar() {
       </div>
       <nav className="flex-1 overflow-y-auto p-4 space-y-1">
         {navItems.map((item) => {
-          // Determine if the item is active. For /clients, also check if pathname starts with /clients/
-          // to keep it active for /clients/new and /clients/[id]/edit
-          const isActive = item.href === '/clients' 
-            ? pathname.startsWith('/clients') 
-            : pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href) && item.href !== '/clients/new');
-
-          // Special handling for 'Agregar Cliente' to avoid it being active when viewing '/clients' list
-          if (item.href === '/clients/new' && pathname === '/clients') {
-             // isActive should be false for 'Agregar Cliente' if we are on '/clients' list
-          }
-
-
+          const isActive = pathname.startsWith(item.href) && (item.href !== '/' || pathname === '/');
+          
           return (
             <Button
               key={item.href}

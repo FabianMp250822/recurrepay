@@ -2,7 +2,7 @@
 'use client';
 
 import Link from 'next/link';
-import { CreditCard, Menu, Users, LogOut, BarChart3 } from 'lucide-react'; // Added BarChart3
+import { CreditCard, Menu, Users, LogOut, BarChart3, SettingsIcon } from 'lucide-react'; // Added BarChart3, SettingsIcon
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger, SheetClose } from '@/components/ui/sheet';
 import {
@@ -20,7 +20,8 @@ import { useAuth } from '@/contexts/AuthContext';
 const navItems = [
   { href: '/dashboard', label: 'Panel de Analíticas', icon: BarChart3 },
   { href: '/clients', label: 'Clientes', icon: Users },
-  { href: '/clients/new', label: 'Agregar Cliente', icon: Users },
+  // { href: '/clients/new', label: 'Agregar Cliente', icon: Users }, // Removed to avoid redundancy, covered by sidebar
+  { href: '/settings', label: 'Configuración', icon: SettingsIcon }, // New settings link
 ];
 
 
@@ -33,6 +34,7 @@ export function AppHeader() {
     if (pathname === ('/clients')) return 'Lista de Clientes';
     if (pathname.startsWith('/clients/new')) return 'Crear Nuevo Cliente';
     if (pathname.match(/^\/clients\/[^/]+\/edit$/)) return 'Editar Cliente';
+    if (pathname === ('/settings')) return 'Configuración'; // Title for settings page
     if (pathname.startsWith('/login')) return 'Inicio de Sesión de Administrador';
     return 'RecurPay';
   };
@@ -55,17 +57,17 @@ export function AppHeader() {
           </SheetTrigger>
           <SheetContent side="left" className="sm:max-w-xs bg-sidebar text-sidebar-foreground">
             <nav className="grid gap-4 text-lg font-medium p-2">
-              <Link
-                href="/dashboard"
-                className="group flex h-10 w-10 shrink-0 items-center justify-center gap-2 rounded-full bg-primary text-lg font-semibold text-primary-foreground md:text-base mb-4"
-              >
-                <CreditCard className="h-5 w-5 transition-all group-hover:scale-110" />
-                <span className="sr-only">RecurPay</span>
-              </Link>
+              <SheetClose asChild>
+                <Link
+                  href="/dashboard"
+                  className="group flex h-10 w-10 shrink-0 items-center justify-center gap-2 rounded-full bg-primary text-lg font-semibold text-primary-foreground md:text-base mb-4"
+                >
+                  <CreditCard className="h-5 w-5 transition-all group-hover:scale-110" />
+                  <span className="sr-only">RecurPay</span>
+                </Link>
+              </SheetClose>
               {navItems.map((item) => {
-                  const isActive = item.href === '/clients' 
-                    ? pathname.startsWith('/clients') 
-                    : pathname === item.href;
+                  const isActive = pathname.startsWith(item.href) && (item.href !== '/' || pathname === '/');
                 return (
                 <SheetClose asChild key={item.href}>
                   <Link

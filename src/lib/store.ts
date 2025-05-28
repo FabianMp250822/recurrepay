@@ -1,5 +1,5 @@
 
-import type { Client, PaymentRecord } from '@/types';
+import type { Client, PaymentRecord, AppFinancingSettings, FinancingPlanSetting } from '@/types';
 import { db } from '@/lib/firebase'; // Client SDK for ALL operations now
 import {
   collection,
@@ -14,14 +14,19 @@ import {
   where,
   Timestamp,
   writeBatch,
-  serverTimestamp
+  serverTimestamp,
+  setDoc
 } from 'firebase/firestore';
+import { FINANCING_OPTIONS as DEFAULT_FINANCING_PLANS } from './constants';
+
 
 const CLIENTS_COLLECTION = 'listapagospendiendes';
 const PAYMENT_HISTORY_SUBCOLLECTION = 'paymentHistory';
+const APP_SETTINGS_COLLECTION = 'appSettings';
+const FINANCING_PLANS_DOC_ID = 'financingPlans';
 
+// --- Client Operations ---
 
-// READ operations use the Client SDK (db)
 export async function getClients(): Promise<Client[]> {
   try {
     const clientsCollectionRef = collection(db, CLIENTS_COLLECTION);
@@ -59,14 +64,15 @@ export async function getClientById(id: string): Promise<Client | undefined> {
   }
 }
 
-// WRITE operations will now use the Client SDK (db) as well.
-// This means they will be subject to Firestore security rules from the client's perspective.
-// If called from Server Actions, request.auth will be null in security rules.
+
 export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ client?: Client, error?: string }> {
+  if (!db) { // Check if db (client SDK) is initialized
+    console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in addClient. Firebase might not be initialized correctly on the client/server where this is called.");
+    return { error: "Error de la aplicación: La conexión con la base de datos no está inicializada. Por favor, contacte al administrador." };
+  }
   try {
     const clientsCollectionRef = collection(db, CLIENTS_COLLECTION);
     
-    // Client-side email check (optional, but good practice if rules don't enforce uniqueness server-side)
     const emailQuery = query(clientsCollectionRef, where('email', '==', clientData.email));
     const emailQuerySnapshot = await getDocs(emailQuery);
     if (!emailQuerySnapshot.empty) {
@@ -99,6 +105,10 @@ export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ clien
 }
 
 export async function updateClient(id: string, clientData: Partial<Omit<Client, 'id'>>): Promise<{ client?: Client, error?: string }> {
+  if (!db) {
+    console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in updateClient.");
+    return { error: "Error de la aplicación: La conexión con la base de datos no está inicializada. Por favor, contacte al administrador." };
+  }
   try {
     const clientDocRef = doc(db, CLIENTS_COLLECTION, id);
     const clientDocSnap = await getDoc(clientDocRef);
@@ -146,13 +156,12 @@ export async function updateClient(id: string, clientData: Partial<Omit<Client, 
 }
 
 export async function deleteClient(id: string): Promise<{ success?: boolean, error?: string }> {
+   if (!db) {
+    console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in deleteClient.");
+    return { error: "Error de la aplicación: La conexión con la base de datos no está inicializada. Por favor, contacte al administrador." };
+  }
   try {
     const clientDocRef = doc(db, CLIENTS_COLLECTION, id);
-    
-    // To delete subcollections with the client SDK, you need to list and delete each document.
-    // This is more complex than with Admin SDK. For simplicity, skipping subcollection deletion here.
-    // If needed, implement recursive deletion logic for paymentHistory.
-
     await deleteDoc(clientDocRef);
     return { success: true };
   } catch (error: any) {
@@ -167,12 +176,18 @@ export async function deleteClient(id: string): Promise<{ success?: boolean, err
   }
 }
 
+// --- Payment History Operations ---
+
 export async function addPaymentToHistory(clientId: string, paymentData: Omit<PaymentRecord, 'id' | 'recordedAt'>): Promise<{ record?: PaymentRecord, error?: string }> {
+  if (!db) {
+    console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in addPaymentToHistory.");
+    return { error: "Error de la aplicación: La conexión con la base de datos no está inicializada." };
+  }
   try {
     const historyCollectionRef = collection(db, CLIENTS_COLLECTION, clientId, PAYMENT_HISTORY_SUBCOLLECTION);
     const dataToSave = {
       ...paymentData,
-      recordedAt: Timestamp.now().toDate().toISOString(), // Use client-side Timestamp
+      recordedAt: Timestamp.now().toDate().toISOString(), 
     };
     const docRef = await addDoc(historyCollectionRef, dataToSave);
     return { record: { id: docRef.id, ...dataToSave } };
@@ -180,7 +195,7 @@ export async function addPaymentToHistory(clientId: string, paymentData: Omit<Pa
     console.error(`Error adding payment to history for client ${clientId} (Client SDK):`, JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     let userMessage = "Error al registrar el pago en el historial.";
     if (error.code === 'permission-denied') {
-      userMessage = "Permiso denegado por Firestore al registrar el pago en el historial. Verifique las reglas de seguridad. Si las operaciones se realizan desde el servidor (ej. Server Actions), el Firebase Client SDK no tendrá un usuario autenticado.";
+      userMessage = "Permiso denegado por Firestore al registrar el pago en el historial. Verifique las reglas de seguridad.";
     } else if (error instanceof Error) {
       userMessage = `Error al registrar pago en historial: ${error.message}`;
     }
@@ -206,8 +221,80 @@ export async function getPaymentHistory(clientId: string): Promise<PaymentRecord
     if (error.code === 'permission-denied') {
       throw new Error(`Permiso denegado por Firestore al buscar historial de pagos para el cliente ${clientId}. Verifique las reglas de seguridad.`);
     }
-    return [];
+    return []; // Return empty array or rethrow, depending on desired error handling
   }
 }
 
-    
+
+// --- App Settings Operations ---
+
+const defaultFinancingPlans: AppFinancingSettings = {
+  plans: [
+    { months: 0, label: "Sin financiación", rate: 0, isDefault: true, isConfigurable: false },
+    { months: 3, label: "3 meses", rate: 0.05, isConfigurable: true },
+    { months: 6, label: "6 meses", rate: 0.08, isConfigurable: true },
+    { months: 9, label: "9 meses", rate: 0.10, isConfigurable: true },
+    { months: 12, label: "12 meses", rate: 0.12, isConfigurable: true },
+  ]
+};
+
+export async function getFinancingPlanSettings(): Promise<AppFinancingSettings> {
+  if (!db) {
+    console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in getFinancingPlanSettings. Returning default plans.");
+    return defaultFinancingPlans;
+  }
+  try {
+    const settingsDocRef = doc(db, APP_SETTINGS_COLLECTION, FINANCING_PLANS_DOC_ID);
+    const docSnap = await getDoc(settingsDocRef);
+    if (docSnap.exists()) {
+      const data = docSnap.data() as AppFinancingSettings;
+      // Ensure all default plans are present, merge if necessary
+      const mergedPlans = defaultFinancingPlans.plans.map(defaultPlan => {
+        const existingPlan = data.plans?.find(p => p.months === defaultPlan.months);
+        return existingPlan ? { ...defaultPlan, ...existingPlan, isConfigurable: defaultPlan.isConfigurable } : defaultPlan;
+      });
+      return { plans: mergedPlans };
+    } else {
+      // If document doesn't exist, create it with defaults
+      await setDoc(settingsDocRef, defaultFinancingPlans);
+      return defaultFinancingPlans;
+    }
+  } catch (error: any) {
+    console.error("Error fetching financing plan settings from Firestore:", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    if (error.code === 'permission-denied') {
+      throw new Error("Permiso denegado por Firestore al obtener la configuración de planes de financiación.");
+    }
+    // Fallback to default if there's an error other than permission denied
+    console.warn("Falling back to default financing plans due to error.");
+    return defaultFinancingPlans;
+  }
+}
+
+export async function saveFinancingPlanSettings(settings: AppFinancingSettings): Promise<{ success: boolean, error?: string }> {
+  if (!db) {
+    console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in saveFinancingPlanSettings.");
+    return { success: false, error: "Error de la aplicación: La conexión con la base de datos no está inicializada." };
+  }
+  try {
+    const settingsDocRef = doc(db, APP_SETTINGS_COLLECTION, FINANCING_PLANS_DOC_ID);
+    await setDoc(settingsDocRef, settings, { merge: true }); // merge: true to update existing fields or create if not exist
+    return { success: true };
+  } catch (error: any) {
+    console.error("Error saving financing plan settings to Firestore:", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    let userMessage = "Error al guardar la configuración de planes de financiación.";
+    if (error.code === 'permission-denied') {
+      userMessage = "Permiso denegado por Firestore al guardar la configuración de planes de financiación.";
+    }
+    return { success: false, error: userMessage };
+  }
+}
+
+// Utility to get financing options in the map format for forms
+export async function getFinancingOptionsMap(): Promise<{ [key: number]: { rate: number; label: string } }> {
+    const settings = await getFinancingPlanSettings();
+    if (!settings || !settings.plans) return {};
+    return settings.plans.reduce((acc, plan) => {
+      acc[plan.months] = { rate: plan.rate, label: plan.label };
+      return acc;
+    }, {} as { [key: number]: { rate: number; label: string } });
+}
