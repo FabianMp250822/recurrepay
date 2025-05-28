@@ -30,7 +30,7 @@ export async function getClients(): Promise<Client[]> {
     console.error("Error fetching clients from Firestore (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     if (error.code === 'permission-denied') {
       // This will make the error more specific when it propagates to the Server Component
-      throw new Error("Firestore permission denied when fetching clients. Ensure Firebase security rules allow read access to the 'listapagospendiendes' collection for authenticated admins, and that admin status (e.g., 'activo: true' in 'administradores' collection) is correctly set and accessible by the rules.");
+      throw new Error("Firestore permission denied when fetching clients. Ensure Firebase security rules allow read access to the 'listapagospendiendes' collection for authenticated users, and that the user is properly authenticated when the request is made. If admin checks are intended by rules, ensure admin status is correctly configured.");
     }
     // For other types of errors, rethrow a generic or more specific error
     throw new Error(`Failed to fetch clients due to Firestore error: ${error.message || 'Unknown Firestore error'}. Code: ${error.code || 'N/A'}`);
@@ -48,7 +48,7 @@ export async function getClientById(id: string): Promise<Client | undefined> {
   } catch (error: any) {
     console.error("Error fetching client by ID from Firestore (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
      if (error.code === 'permission-denied') {
-      throw new Error(`Firestore permission denied when fetching client by ID '${id}'. Check security rules and admin status.`);
+      throw new Error(`Firestore permission denied when fetching client by ID '${id}'. Check security rules and ensure user is authenticated. If admin checks are intended by rules, verify admin status.`);
     }
     throw new Error(`Failed to fetch client by ID '${id}': ${error.message || 'Unknown Firestore error'}`);
   }
@@ -56,10 +56,9 @@ export async function getClientById(id: string): Promise<Client | undefined> {
 
 export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ client?: Client, error?: string }> {
   try {
+    // Email uniqueness check also requires read permission.
+    // If listapagospendiendes rules are 'if request.auth != null', this check will also fail from server actions using client SDK.
     const q = query(collection(db, CLIENTS_COLLECTION), where('email', '==', clientData.email));
-    // The getDocs call below also requires read permission. If getClients is failing due to read permissions,
-    // this query might also fail silently or contribute to permission issues if rules are very granular.
-    // For now, focusing on the explicit error from getClients.
     const emailQuerySnapshot = await getDocs(q);
     if (!emailQuerySnapshot.empty) {
       return { error: "La dirección de correo electrónico ya existe para otro cliente." };
@@ -73,7 +72,7 @@ export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ clien
     if (error.code) {
       switch (error.code) {
         case 'permission-denied':
-          userMessage = "Permiso denegado por Firestore. Verifique las reglas de seguridad y que los datos del administrador (UID y campo 'activo') sean correctos en la colección 'administradores'.";
+          userMessage = "Permiso denegado por Firestore al intentar guardar el cliente. Asegúrese de estar autenticado y que las reglas de seguridad lo permitan. Si las operaciones se realizan desde el servidor (ej. Server Actions), el Firebase Client SDK no tendrá un usuario autenticado, causando este error con reglas que requieran autenticación.";
           break;
         case 'unavailable':
           userMessage = "No se pudo conectar a Firestore. Verifique su conexión a internet.";
@@ -118,7 +117,7 @@ export async function updateClient(id: string, clientData: Omit<Client, 'id' | '
 
     const dataToUpdate = {
         ...clientData,
-        createdAt: originalClientData.createdAt
+        createdAt: originalClientData.createdAt // Preserve original creation date
     };
 
     await updateDoc(clientDocRef, dataToUpdate);
@@ -130,7 +129,7 @@ export async function updateClient(id: string, clientData: Omit<Client, 'id' | '
      if (error.code) {
       switch (error.code) {
         case 'permission-denied':
-          userMessage = "Permiso denegado por Firestore. Verifique las reglas de seguridad y que los datos del administrador (UID y campo 'activo') sean correctos en la colección 'administradores'.";
+          userMessage = "Permiso denegado por Firestore al intentar actualizar el cliente. Asegúrese de estar autenticado y que las reglas de seguridad lo permitan. Si las operaciones se realizan desde el servidor (ej. Server Actions), el Firebase Client SDK no tendrá un usuario autenticado, causando este error con reglas que requieran autenticación.";
           break;
         case 'unavailable':
           userMessage = "No se pudo conectar a Firestore. Verifique su conexión a internet.";
@@ -159,13 +158,17 @@ export async function deleteClient(id: string): Promise<{ success?: boolean, err
   } catch (error: any) {
     console.error("Error deleting client from Firestore (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     let userMessage = "Error al eliminar el cliente. Inténtelo de nuevo.";
-    if (error.code && error.code === 'permission-denied') {
-        userMessage = "Permiso denegado por Firestore para eliminar. Verifique las reglas de seguridad y los datos del administrador.";
+    if (error.code) {
+        switch (error.code) {
+            case 'permission-denied':
+            userMessage = "Permiso denegado por Firestore al intentar eliminar el cliente. Asegúrese de estar autenticado y que las reglas de seguridad lo permitan. Si las operaciones se realizan desde el servidor (ej. Server Actions), el Firebase Client SDK no tendrá un usuario autenticado, causando este error con reglas que requieran autenticación.";
+            break;
+            default:
+            userMessage = `Error de Firestore al eliminar: ${error.message} (Código: ${error.code})`;
+        }
     } else if (error instanceof Error) {
         userMessage = error.message;
     }
     return { error: userMessage };
   }
 }
-
-    
