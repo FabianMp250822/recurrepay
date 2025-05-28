@@ -1,8 +1,10 @@
+
 import type { Metadata } from 'next';
 import { Open_Sans } from 'next/font/google';
 import './globals.css';
 import { Toaster } from '@/components/ui/toaster';
 import AppProviders from '@/components/layout/app-providers';
+import { AuthProvider } from '@/contexts/AuthContext'; // Import AuthProvider
 
 const openSans = Open_Sans({
   subsets: ['latin'],
@@ -25,10 +27,12 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${openSans.variable} font-sans antialiased`}>
-        <AppProviders>
-          {children}
-          <Toaster />
-        </AppProviders>
+        <AuthProvider> {/* Wrap AppProviders (and thus children) with AuthProvider */}
+          <AppProviders>
+            {children}
+            <Toaster />
+          </AppProviders>
+        </AuthProvider>
       </body>
     </html>
   );

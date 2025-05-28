@@ -1,3 +1,6 @@
+
+import type { User as FirebaseUser } from 'firebase/auth';
+
 export interface Client {
   id: string;
   firstName: string;
@@ -11,3 +14,8 @@ export interface Client {
 }
 
 export type ClientFormData = Omit<Client, 'id' | 'nextPaymentDate' | 'createdAt'>;
+
+// Extended Firebase User type for our app context if needed,
+// but for now, AuthContext will manage isAdmin separately.
+export type AppUser = FirebaseUser;
+
