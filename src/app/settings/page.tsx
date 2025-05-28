@@ -8,10 +8,19 @@ import { FinancingSettingsForm } from '@/components/settings/FinancingSettingsFo
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import type { AppFinancingSettings } from '@/types';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Terminal, Loader2 } from 'lucide-react';
+import { Terminal, Loader2, CreditCard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { testMercadoPagoPreferenceCreation } from '@/app/actions/mercadopagoTestActions';
 import { useToast } from '@/hooks/use-toast';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableCaption,
+} from "@/components/ui/table";
 
 // TestMercadoPagoButton remains a client component, which is correct
 function TestMercadoPagoButton() {
@@ -31,6 +40,7 @@ function TestMercadoPagoButton() {
         title: "Error en Prueba de Mercado Pago",
         description: result.error || "Ocurrió un error desconocido.",
         variant: "destructive",
+        duration: 9000,
       });
     }
   };
@@ -41,6 +51,13 @@ function TestMercadoPagoButton() {
     </Button>
   );
 }
+
+const testCards = [
+  { brand: "Mastercard", number: "5254 1336 7440 3564", cvv: "123", expiry: "11/30" },
+  { brand: "Visa", number: "4013 5406 8274 6260", cvv: "123", expiry: "11/30" },
+  { brand: "American Express", number: "3743 781877 55283", cvv: "1234", expiry: "11/30" },
+  { brand: "Visa Debito", number: "4915 1120 5524 6507", cvv: "123", expiry: "11/30" },
+];
 
 export default function SettingsPage() { // Removed 'async'
   const [financingSettings, setFinancingSettings] = useState<AppFinancingSettings | null>(null);
@@ -97,7 +114,11 @@ export default function SettingsPage() { // Removed 'async'
         
         <Card>
           <CardHeader>
-            <CardTitle>Pruebas de Integración</CardTitle>
+            <CardTitle>Pruebas de Integración Mercado Pago</CardTitle>
+            <CardDescription>
+              Utilice el botón para probar la creación de una preferencia de pago con sus credenciales de prueba.
+              Consulte la tabla de tarjetas de prueba para simular pagos.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <TestMercadoPagoButton />
@@ -105,6 +126,38 @@ export default function SettingsPage() { // Removed 'async'
               Este botón intentará crear una preferencia de pago de prueba usando tus credenciales de prueba de Mercado Pago.
               El resultado se mostrará en la consola de tu servidor Next.js y como una notificación.
             </p>
+
+            <Card className="mt-6">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center">
+                  <CreditCard className="mr-2 h-5 w-5" />
+                  Tarjetas de Prueba Mercado Pago
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableCaption>Estas son tarjetas de prueba proporcionadas por Mercado Pago para el entorno de sandbox.</TableCaption>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Tarjeta</TableHead>
+                      <TableHead>Número</TableHead>
+                      <TableHead className="text-center">CVV</TableHead>
+                      <TableHead className="text-right">Vencimiento</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {testCards.map((card) => (
+                      <TableRow key={card.number}>
+                        <TableCell className="font-medium">{card.brand}</TableCell>
+                        <TableCell>{card.number}</TableCell>
+                        <TableCell className="text-center">{card.cvv}</TableCell>
+                        <TableCell className="text-right">{card.expiry}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
           </CardContent>
         </Card>
 
