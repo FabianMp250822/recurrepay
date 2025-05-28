@@ -21,14 +21,13 @@ export async function getClients(): Promise<Client[]> {
     const clientsCollectionRef = collection(db, CLIENTS_COLLECTION);
     const q = query(clientsCollectionRef, orderBy('createdAt', 'desc'));
     const querySnapshot = await getDocs(q);
-    const clientsList: Client[] = querySnapshot.docs.map(docSnap => ({ // Renamed doc to docSnap to avoid conflict
+    const clientsList: Client[] = querySnapshot.docs.map(docSnap => ({ 
       id: docSnap.id,
       ...(docSnap.data() as Omit<Client, 'id'>)
     }));
     return clientsList;
   } catch (error: any) {
     console.error("Error fetching clients from Firestore:", error);
-    // Consider returning a more specific error or an empty array with a status
     return []; 
   }
 }
@@ -58,7 +57,7 @@ export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ clien
     const docRef = await addDoc(collection(db, CLIENTS_COLLECTION), clientData);
     return { client: { id: docRef.id, ...clientData } };
   } catch (error: any) {
-    console.error("Error adding client to Firestore:", error);
+    console.error("Error adding client to Firestore (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     let userMessage = "Error al agregar el cliente. Inténtelo de nuevo.";
     if (error.code) {
       switch (error.code) {
@@ -115,7 +114,7 @@ export async function updateClient(id: string, clientData: Omit<Client, 'id' | '
     return { client: { id: id, ...dataToUpdate } };
 
   } catch (error: any) {
-    console.error("Error updating client in Firestore:", error);
+    console.error("Error updating client in Firestore (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     let userMessage = "Error al actualizar el cliente. Inténtelo de nuevo.";
      if (error.code) {
       switch (error.code) {
@@ -147,7 +146,7 @@ export async function deleteClient(id: string): Promise<{ success?: boolean, err
     await deleteDoc(clientDocRef);
     return { success: true };
   } catch (error: any) {
-    console.error("Error deleting client from Firestore:", error);
+    console.error("Error deleting client from Firestore (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     let userMessage = "Error al eliminar el cliente. Inténtelo de nuevo.";
     if (error.code && error.code === 'permission-denied') {
         userMessage = "Permiso denegado por Firestore para eliminar. Verifique las reglas de seguridad y los datos del administrador.";
@@ -157,3 +156,4 @@ export async function deleteClient(id: string): Promise<{ success?: boolean, err
     return { error: userMessage };
   }
 }
+
