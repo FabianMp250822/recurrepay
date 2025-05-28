@@ -11,32 +11,38 @@ import { formatCurrency, formatDate, calculateNextPaymentDate } from '@/lib/util
 import { IVA_RATE, FINANCING_OPTIONS } from '@/lib/constants';
 
 // Helper function to calculate financing details
-function calculateFinancingDetails(formData: ClientFormData & { paymentAmount?: number }): Partial<Client> {
+function calculateFinancingDetails(formData: ClientFormData): Partial<Client> {
   const contractValue = formData.contractValue || 0;
-  const downPayment = formData.downPayment || 0;
+  const downPaymentPercentage = formData.downPaymentPercentage || 0;
   const financingPlanKey = formData.financingPlan || 0;
-
-  let calculatedPaymentAmount = formData.paymentAmount || 0; // Default to manually entered if no financing
 
   const details: Partial<Client> = {
     contractValue,
-    downPayment,
+    downPaymentPercentage,
     paymentMethod: formData.paymentMethod,
     financingPlan: financingPlanKey,
     ivaRate: 0,
     ivaAmount: 0,
-    totalWithIva: contractValue, // Default if no IVA applicable or contract value is 0
+    totalWithIva: contractValue,
+    downPayment: 0, // Will be calculated
     amountToFinance: 0,
     financingInterestRateApplied: 0,
     financingInterestAmount: 0,
     totalAmountWithInterest: 0,
+    acceptanceLetterUrl: formData.acceptanceLetterUrl,
+    acceptanceLetterFileName: formData.acceptanceLetterFileName,
+    contractFileUrl: formData.contractFileUrl,
+    contractFileName: formData.contractFileName,
   };
+
+  let calculatedPaymentAmount = formData.paymentAmount || 0;
 
   if (contractValue > 0) {
     details.ivaRate = IVA_RATE;
     details.ivaAmount = contractValue * IVA_RATE;
     details.totalWithIva = contractValue + details.ivaAmount;
-    details.amountToFinance = Math.max(0, details.totalWithIva - downPayment);
+    details.downPayment = details.totalWithIva * (downPaymentPercentage / 100);
+    details.amountToFinance = Math.max(0, details.totalWithIva - details.downPayment);
 
     if (financingPlanKey !== 0 && details.amountToFinance > 0) {
       const planInfo = FINANCING_OPTIONS[financingPlanKey];
@@ -45,32 +51,26 @@ function calculateFinancingDetails(formData: ClientFormData & { paymentAmount?: 
         details.financingInterestAmount = details.amountToFinance * planInfo.rate;
         details.totalAmountWithInterest = details.amountToFinance + details.financingInterestAmount;
         const numberOfMonths = financingPlanKey;
-        calculatedPaymentAmount = numberOfMonths > 0 ? details.totalAmountWithInterest / numberOfMonths : 0;
+        calculatedPaymentAmount = numberOfMonths > 0 ? parseFloat((details.totalAmountWithInterest / numberOfMonths).toFixed(2)) : 0;
       }
     } else if (details.amountToFinance === 0 && financingPlanKey !== 0) {
-      // Contract fully paid with down payment, but a plan was selected (e.g. for record)
-      // No monthly payment needed if amountToFinance is 0
-      calculatedPaymentAmount = 0;
+      calculatedPaymentAmount = 0; // Fully paid by down payment
+    } else if (financingPlanKey === 0) { // No financing plan
+        // paymentAmount must be provided by user for contractValue > 0 and no financing
+        // This should be validated by schema already.
+        calculatedPaymentAmount = formData.paymentAmount || 0;
     }
+  } else { // No contract value (e.g. simple recurring service)
+    details.downPayment = 0; // No down payment if no contract value
+    calculatedPaymentAmount = formData.paymentAmount || 0;
   }
   
-  // Si no hay plan de financiación y no se ingresó un monto de pago, podría ser un error
-  // pero la validación del schema/form debería haberlo cubierto.
-  // Aquí solo nos aseguramos de que paymentAmount (cuota) tenga un valor.
-  if (financingPlanKey === 0 && contractValue === 0 && (!formData.paymentAmount || formData.paymentAmount <= 0)) {
-    // This case implies a recurring service with no contract value, paymentAmount is mandatory.
-    // The schema should enforce `paymentAmount` to be positive if `financingPlan` is 0 and `contractValue` is 0.
-    // For now, we assume `formData.paymentAmount` is valid if this path is reached.
-     calculatedPaymentAmount = formData.paymentAmount || 0; // Default if not calculated by financing
-  }
-
-
   details.paymentAmount = calculatedPaymentAmount;
   return details;
 }
 
 
-export async function createClientAction(formData: ClientFormData & { paymentAmount?: number }) {
+export async function createClientAction(formData: ClientFormData) {
   const validationResult = clientSchema.safeParse(formData);
   if (!validationResult.success) {
     return { success: false, errors: validationResult.error.flatten().fieldErrors };
@@ -80,12 +80,15 @@ export async function createClientAction(formData: ClientFormData & { paymentAmo
   const financingDetails = calculateFinancingDetails(validatedData);
 
   const clientToCreate = {
-    ...validatedData,
-    ...financingDetails,
-    paymentAmount: financingDetails.paymentAmount!, // Ensure paymentAmount is set
+    ...validatedData, // includes form fields like firstName, email, etc. AND file URLs/names if uploaded
+    ...financingDetails, // includes calculated financial fields like ivaAmount, downPayment (monetary), paymentAmount (monthly installment)
+    paymentAmount: financingDetails.paymentAmount!, 
     nextPaymentDate: calculateNextPaymentDate(validatedData.paymentDayOfMonth).toISOString(),
     createdAt: new Date().toISOString(),
   };
+  // Remove undefined values that Zod might have set from optional fields if they were empty
+  Object.keys(clientToCreate).forEach(key => clientToCreate[key as keyof typeof clientToCreate] === undefined && delete clientToCreate[key as keyof typeof clientToCreate]);
+
 
   const result = await store.addClient(clientToCreate as Omit<Client, 'id'>);
   if (result.error) {
@@ -96,7 +99,7 @@ export async function createClientAction(formData: ClientFormData & { paymentAmo
   return { success: true, client: result.client };
 }
 
-export async function updateClientAction(id: string, formData: ClientFormData & { paymentAmount?: number }) {
+export async function updateClientAction(id: string, formData: ClientFormData) {
   const validationResult = clientSchema.safeParse(formData);
   if (!validationResult.success) {
     return { success: false, errors: validationResult.error.flatten().fieldErrors };
@@ -108,10 +111,10 @@ export async function updateClientAction(id: string, formData: ClientFormData & 
   const clientToUpdate = {
     ...validatedData,
     ...financingDetails,
-    paymentAmount: financingDetails.paymentAmount!, // Ensure paymentAmount is set
+    paymentAmount: financingDetails.paymentAmount!,
     nextPaymentDate: calculateNextPaymentDate(validatedData.paymentDayOfMonth).toISOString(),
-    // createdAt should not be updated
   };
+  Object.keys(clientToUpdate).forEach(key => clientToUpdate[key as keyof typeof clientToUpdate] === undefined && delete clientToUpdate[key as keyof typeof clientToUpdate]);
 
 
   const result = await store.updateClient(id, clientToUpdate as Omit<Client, 'id' | 'createdAt'>);
@@ -125,6 +128,7 @@ export async function updateClientAction(id: string, formData: ClientFormData & 
 }
 
 export async function deleteClientAction(id: string) {
+  // TODO: Consider deleting associated files from Firebase Storage
   const result = await store.deleteClient(id);
   if (result.error) {
     return { success: false, error: result.error };
@@ -156,7 +160,7 @@ export async function sendPaymentReminderEmailAction(client: Client) {
       pass: EMAIL_SERVER_PASSWORD,
     },
     tls: {
-      // rejectUnauthorized: false 
+      // rejectUnauthorized: false // Use con precaución, solo para desarrollo si es necesario
     }
   });
   
@@ -178,7 +182,8 @@ export async function sendPaymentReminderEmailAction(client: Client) {
         <p><strong>Detalles de su financiación:</strong></p>
         <ul>
           <li>Valor del Contrato: ${formatCurrency(client.contractValue)}</li>
-          <li>Plan: ${client.financingPlan} meses</li>
+          ${client.downPaymentPercentage && client.downPayment ? `<li>Abono (${client.downPaymentPercentage}%): ${formatCurrency(client.downPayment)}</li>` : ''}
+          <li>Plan: ${FINANCING_OPTIONS[client.financingPlan]?.label || `${client.financingPlan} meses`}</li>
           <li>Cuota Mensual: ${formatCurrency(client.paymentAmount)}</li>
         </ul>
         ` : client.paymentAmount > 0 ? `

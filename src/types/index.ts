@@ -13,7 +13,10 @@ export interface Client {
   ivaRate?: number; // Tasa de IVA aplicada (ej: 0.19)
   ivaAmount?: number; // Monto de IVA calculado
   totalWithIva?: number; // contractValue + ivaAmount
-  downPayment?: number; // Abono inicial
+
+  downPaymentPercentage?: number; // Porcentaje de abono ingresado por el usuario
+  downPayment?: number; // Abono inicial (calculado monetariamente)
+  
   amountToFinance?: number; // totalWithIva - downPayment
   
   paymentMethod?: string; // Medio de pago del contrato/abono
@@ -22,11 +25,17 @@ export interface Client {
   financingInterestAmount?: number; // Monto de interés por financiación
   totalAmountWithInterest?: number; // amountToFinance + financingInterestAmount
 
-  paymentAmount: number; // Cuota Mensual Calculada (anteriormente monto de pago recurrente)
+  paymentAmount: number; // Cuota Mensual Calculada
   paymentDayOfMonth: number; // Día del mes para el pago de la cuota
   
-  nextPaymentDate: string; // Store as ISO string (para la próxima cuota)
+  nextPaymentDate: string; // Store as ISO string
   createdAt: string; // Store as ISO string
+
+  // File uploads
+  acceptanceLetterUrl?: string;
+  acceptanceLetterFileName?: string;
+  contractFileUrl?: string;
+  contractFileName?: string;
 }
 
 // FormData para los campos que el usuario ingresa directamente en el formulario
@@ -36,13 +45,21 @@ export type ClientFormData = {
   email: string;
   phoneNumber: string;
   contractValue?: number;
-  downPayment?: number;
+  downPaymentPercentage?: number; // Usuario ingresa porcentaje
   paymentMethod?: string;
   financingPlan?: number; // 3, 6, 9, 12
   paymentDayOfMonth: number;
-  // paymentAmount (cuota mensual) se calculará y no vendrá directamente del form si hay financiación
+  paymentAmount?: number; // Monto de pago recurrente (si no hay financiación)
+
+  // File objects (not directly part of schema for submission, handled separately)
+  acceptanceLetterFile?: File | null;
+  contractFileFile?: File | null;
+
+  // URLs (passed to server action after upload)
+  acceptanceLetterUrl?: string;
+  acceptanceLetterFileName?: string;
+  contractFileUrl?: string;
+  contractFileName?: string;
 };
 
-// Extended Firebase User type for our app context if needed,
-// but for now, AuthContext will manage isAdmin separately.
 export type AppUser = FirebaseUser;

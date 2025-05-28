@@ -1,6 +1,6 @@
 
 import Link from 'next/link';
-import { PlusCircle, Edit3, UsersIcon as Users, FileText, DollarSign } from 'lucide-react';
+import { PlusCircle, Edit3, UsersIcon as Users, FileText, DollarSign, LinkIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Table,
@@ -94,6 +94,7 @@ export default async function DashboardPage() {
                 <TableHead className="hidden md:table-cell">Correo Electrónico</TableHead>
                 <TableHead className="text-right">Cuota Mensual</TableHead>
                 <TableHead className="hidden sm:table-cell">Plan Financiación</TableHead>
+                <TableHead className="hidden lg:table-cell">Documentos</TableHead>
                 <TableHead className="hidden sm:table-cell">Próximo Pago</TableHead>
                 <TableHead className="hidden sm:table-cell text-center">Estado</TableHead>
                 <TableHead className="text-right">Acciones</TableHead>
@@ -114,6 +115,21 @@ export default async function DashboardPage() {
                     {client.financingPlan && client.financingPlan !== 0 && FINANCING_OPTIONS[client.financingPlan]
                       ? FINANCING_OPTIONS[client.financingPlan].label
                       : client.contractValue && client.contractValue > 0 ? <span className="text-muted-foreground">Pago único</span> : <span className="text-muted-foreground">N/A</span>}
+                  </TableCell>
+                  <TableCell className="hidden lg:table-cell">
+                    <div className="flex flex-col gap-1 text-xs">
+                      {client.acceptanceLetterUrl && (
+                        <a href={client.acceptanceLetterUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-1">
+                          <LinkIcon size={12} /> Carta Acept.
+                        </a>
+                      )}
+                      {client.contractFileUrl && (
+                         <a href={client.contractFileUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-1">
+                          <LinkIcon size={12} /> Contrato
+                        </a>
+                      )}
+                       {(!client.acceptanceLetterUrl && !client.contractFileUrl) && <span className="text-muted-foreground">-</span>}
+                    </div>
                   </TableCell>
                   <TableCell className="hidden sm:table-cell">{formatDate(client.nextPaymentDate)}</TableCell>
                   <TableCell className="hidden sm:table-cell text-center">
@@ -177,3 +193,4 @@ function UsersIcon(props: React.SVGProps<SVGSVGElement>) {
     </svg>
   )
 }
+

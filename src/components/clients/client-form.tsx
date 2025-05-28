@@ -5,7 +5,9 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm, Controller } from 'react-hook-form';
 import type { z } from 'zod';
 import { useRouter } from 'next/navigation';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { storage } from '@/lib/firebase';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -20,11 +22,12 @@ import {
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Progress } from "@/components/ui/progress";
 import { useToast } from '@/hooks/use-toast';
 import { clientSchema } from '@/lib/schema';
-import type { Client, ClientFormData as ClientFormInputs } from '@/types'; // Renombrado para claridad
+import type { Client, ClientFormData } from '@/types';
 import { createClientAction, updateClientAction } from '@/app/actions/clientActions';
-import { Loader2 } from 'lucide-react';
+import { Loader2, UploadCloud, FileText, CheckCircle2, XCircle, LinkIcon } from 'lucide-react';
 import { IVA_RATE, FINANCING_OPTIONS, PAYMENT_METHODS } from '@/lib/constants';
 import { formatCurrency } from '@/lib/utils';
 
@@ -33,15 +36,33 @@ type ClientFormProps = {
   isEditMode: boolean;
 };
 
-// Define un tipo para los valores calculados que se mostrarán
 type CalculatedValues = {
   ivaAmount: number;
   totalWithIva: number;
+  calculatedDownPayment: number; // Monetary value of down payment
   amountToFinance: number;
   financingInterestRateApplied: number;
   financingInterestAmount: number;
   totalAmountWithInterest: number;
   monthlyInstallment: number;
+};
+
+type FileUploadState = {
+  file: File | null;
+  progress: number;
+  url: string | null;
+  name: string | null;
+  error: string | null;
+  isUploading: boolean;
+};
+
+const initialFileUploadState: FileUploadState = {
+  file: null,
+  progress: 0,
+  url: null,
+  name: null,
+  error: null,
+  isUploading: false,
 };
 
 export function ClientForm({ client, isEditMode }: ClientFormProps) {
@@ -50,9 +71,13 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [showFinancingDetails, setShowFinancingDetails] = useState(false);
 
+  const [acceptanceLetterState, setAcceptanceLetterState] = useState<FileUploadState>(initialFileUploadState);
+  const [contractFileState, setContractFileState] = useState<FileUploadState>(initialFileUploadState);
+
   const [calculatedValues, setCalculatedValues] = useState<CalculatedValues>({
     ivaAmount: 0,
     totalWithIva: 0,
+    calculatedDownPayment: 0,
     amountToFinance: 0,
     financingInterestRateApplied: 0,
     financingInterestAmount: 0,
@@ -67,106 +92,156 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
       lastName: client?.lastName || '',
       email: client?.email || '',
       phoneNumber: client?.phoneNumber || '',
-      contractValue: client?.contractValue || 0,
-      downPayment: client?.downPayment || 0,
+      contractValue: client?.contractValue ?? undefined,
+      downPaymentPercentage: client?.downPaymentPercentage ?? undefined,
       paymentMethod: client?.paymentMethod || PAYMENT_METHODS[0],
-      financingPlan: client?.financingPlan || 0, // 0 para "Sin financiación"
+      financingPlan: client?.financingPlan || 0,
       paymentDayOfMonth: client?.paymentDayOfMonth || 1,
-      paymentAmount: client?.paymentAmount || undefined, // Este será el pago recurrente si no hay financiación
+      paymentAmount: client?.paymentAmount ?? undefined,
+      acceptanceLetterUrl: client?.acceptanceLetterUrl || undefined,
+      acceptanceLetterFileName: client?.acceptanceLetterFileName || undefined,
+      contractFileUrl: client?.contractFileUrl || undefined,
+      contractFileName: client?.contractFileName || undefined,
     },
   });
 
   const watchedContractValue = form.watch('contractValue');
-  const watchedDownPayment = form.watch('downPayment');
+  const watchedDownPaymentPercentage = form.watch('downPaymentPercentage');
   const watchedFinancingPlan = form.watch('financingPlan');
 
   useEffect(() => {
-    const contractValue = parseFloat(String(watchedContractValue)) || 0;
-    const downPayment = parseFloat(String(watchedDownPayment)) || 0;
+    const contractVal = parseFloat(String(watchedContractValue));
+    const downPaymentPerc = parseFloat(String(watchedDownPaymentPercentage));
     const financingPlanKey = Number(watchedFinancingPlan);
 
-    if (financingPlanKey !== 0 && contractValue > 0) {
-      setShowFinancingDetails(true);
-      const ivaAmount = contractValue * IVA_RATE;
-      const totalWithIva = contractValue + ivaAmount;
-      const amountToFinance = Math.max(0, totalWithIva - downPayment);
-      
+    let cv = isNaN(contractVal) ? 0 : contractVal;
+    let dpPerc = isNaN(downPaymentPerc) ? 0 : downPaymentPerc;
+
+    const ivaAmount = cv * IVA_RATE;
+    const totalWithIva = cv + ivaAmount;
+    const calculatedDownPayment = totalWithIva * (dpPerc / 100);
+    
+    setShowFinancingDetails(financingPlanKey !== 0 && cv > 0);
+
+    if (financingPlanKey !== 0 && cv > 0) {
+      const amountToFinance = Math.max(0, totalWithIva - calculatedDownPayment);
       const planDetails = FINANCING_OPTIONS[financingPlanKey];
       const interestRate = planDetails ? planDetails.rate : 0;
       const financingInterestAmount = amountToFinance * interestRate;
       const totalAmountWithInterest = amountToFinance + financingInterestAmount;
-      const numberOfMonths = financingPlanKey; // Asumiendo que la clave es el número de meses
+      const numberOfMonths = financingPlanKey;
       const monthlyInstallment = numberOfMonths > 0 ? totalAmountWithInterest / numberOfMonths : 0;
 
       setCalculatedValues({
         ivaAmount,
         totalWithIva,
+        calculatedDownPayment,
         amountToFinance,
         financingInterestRateApplied: interestRate,
         financingInterestAmount,
         totalAmountWithInterest,
         monthlyInstallment,
       });
-      // Si hay financiación, paymentAmount (cuota mensual) se calcula, no se toma del input
-      form.setValue('paymentAmount', undefined, { shouldValidate: true });
-
-
+      form.setValue('paymentAmount', parseFloat(monthlyInstallment.toFixed(2)), { shouldValidate: true });
     } else {
-      setShowFinancingDetails(false);
       setCalculatedValues({
-        ivaAmount: 0,
-        totalWithIva: contractValue, // Sin IVA si no hay valor de contrato o plan
-        amountToFinance: Math.max(0, contractValue - downPayment),
+        ivaAmount: cv > 0 ? ivaAmount : 0,
+        totalWithIva: cv > 0 ? totalWithIva : cv,
+        calculatedDownPayment: cv > 0 ? calculatedDownPayment : 0,
+        amountToFinance: Math.max(0, (cv > 0 ? totalWithIva : cv) - (cv > 0 ? calculatedDownPayment : 0)),
         financingInterestRateApplied: 0,
         financingInterestAmount: 0,
         totalAmountWithInterest: 0,
         monthlyInstallment: 0,
       });
-       // Si no hay financiación, se podría permitir ingresar un paymentAmount manual
-       // form.setValue('paymentAmount', client?.paymentAmount || 0); // O resetearlo
+      // If not financing, paymentAmount relies on user input (or pre-existing value in edit mode)
+      if (!isEditMode || !client?.paymentAmount) {
+        // form.setValue('paymentAmount', undefined); // Keep user input if any, or clear if new form
+      }
     }
-  }, [watchedContractValue, watchedDownPayment, watchedFinancingPlan, form, client?.paymentAmount]);
+  }, [watchedContractValue, watchedDownPaymentPercentage, watchedFinancingPlan, form, client?.paymentAmount, isEditMode]);
+
+
+  const handleFileUpload = useCallback(async (
+    file: File,
+    fileType: 'acceptanceLetter' | 'contractFile',
+    setState: React.Dispatch<React.SetStateAction<FileUploadState>>
+  ) => {
+    if (!file) return;
+
+    setState(prev => ({ ...prev, isUploading: true, file, progress: 0, error: null }));
+    const uniqueFileName = `${fileType}_${Date.now()}_${file.name}`;
+    // For simplicity, using client email + type for path. Consider client ID if available early.
+    const clientIdentifier = form.getValues("email") || "unknown_client";
+    const storagePath = `client_documents/${clientIdentifier}/${uniqueFileName}`;
+    const storageRef = ref(storage, storagePath);
+    const uploadTask = uploadBytesResumable(storageRef, file);
+
+    uploadTask.on('state_changed',
+      (snapshot) => {
+        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+        setState(prev => ({ ...prev, progress }));
+      },
+      (error) => {
+        console.error(`Upload error (${fileType}):`, error);
+        setState(prev => ({ ...prev, isUploading: false, error: error.message, progress: 0 }));
+        toast({ title: `Error al subir ${fileType}`, description: error.message, variant: 'destructive' });
+      },
+      async () => {
+        const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+        setState(prev => ({ ...prev, isUploading: false, url: downloadURL, name: file.name, progress: 100 }));
+        if (fileType === 'acceptanceLetter') {
+          form.setValue('acceptanceLetterUrl', downloadURL, { shouldValidate: true });
+          form.setValue('acceptanceLetterFileName', file.name, { shouldValidate: true });
+        } else if (fileType === 'contractFile') {
+          form.setValue('contractFileUrl', downloadURL, { shouldValidate: true });
+          form.setValue('contractFileName', file.name, { shouldValidate: true });
+        }
+        toast({ title: `${fileType} subido`, description: `${file.name} subido con éxito.` });
+      }
+    );
+  }, [form, toast]);
 
 
   async function onSubmit(values: z.infer<typeof clientSchema>) {
     setIsSubmitting(true);
 
-    // Si no hay financiación, y el usuario no puso un paymentAmount, no permitir submit si es requerido
-    if (values.financingPlan === 0 && !values.paymentAmount) {
-        form.setError("paymentAmount", { type: "manual", message: "Se requiere un monto de pago recurrente si no hay financiación."})
-        setIsSubmitting(false);
-        return;
-    }
-    
-    const dataToSubmit: ClientFormInputs & { paymentAmount?: number } = {
+    const dataToSubmit: ClientFormData = {
       ...values,
-      contractValue: values.contractValue || 0,
-      downPayment: values.downPayment || 0,
-      financingPlan: values.financingPlan || 0,
-      paymentMethod: values.paymentMethod || '',
+      contractValue: values.contractValue ?? 0,
+      downPaymentPercentage: values.downPaymentPercentage ?? 0,
+      financingPlan: values.financingPlan ?? 0,
+      acceptanceLetterUrl: acceptanceLetterState.url || values.acceptanceLetterUrl,
+      acceptanceLetterFileName: acceptanceLetterState.name || values.acceptanceLetterFileName,
+      contractFileUrl: contractFileState.url || values.contractFileUrl,
+      contractFileName: contractFileState.name || values.contractFileName,
     };
-
-    // Si hay financiación, la cuota mensual se toma de los valores calculados
-    // Si no hay financiación, el usuario debe ingresar un `paymentAmount` para el servicio recurrente
+    
     if (dataToSubmit.financingPlan && dataToSubmit.financingPlan !== 0 && dataToSubmit.contractValue && dataToSubmit.contractValue > 0) {
-      dataToSubmit.paymentAmount = calculatedValues.monthlyInstallment;
+      dataToSubmit.paymentAmount = parseFloat(calculatedValues.monthlyInstallment.toFixed(2));
     } else {
-      // Asegurarse de que paymentAmount tenga un valor si no hay financiación
       if (typeof values.paymentAmount !== 'number' || values.paymentAmount <= 0) {
-         form.setError('paymentAmount', {type: 'manual', message: 'Debe ingresar un monto de pago recurrente válido si no hay plan de financiación.'});
-         setIsSubmitting(false);
-         return;
+        if ((values.contractValue === undefined || values.contractValue === 0) && values.financingPlan === 0) {
+            form.setError('paymentAmount', {type: 'manual', message: 'Debe ingresar un monto de pago recurrente válido si no hay contrato ni financiación.'});
+            setIsSubmitting(false);
+            return;
+        }
+         // if contractValue > 0 but no financing plan, payment amount is also mandatory
+        if (values.contractValue && values.contractValue > 0 && values.financingPlan === 0) {
+             form.setError('paymentAmount', {type: 'manual', message: 'Debe ingresar un monto de pago si el contrato es de pago único (sin financiación).'});
+             setIsSubmitting(false);
+             return;
+        }
       }
       dataToSubmit.paymentAmount = values.paymentAmount;
     }
 
-
     try {
       let result;
       if (isEditMode && client) {
-        result = await updateClientAction(client.id, dataToSubmit as any); // Cast as any for now
+        result = await updateClientAction(client.id, dataToSubmit as any);
       } else {
-        result = await createClientAction(dataToSubmit as any); // Cast as any for now
+        result = await createClientAction(dataToSubmit as any);
       }
 
       if (result.success) {
@@ -175,7 +250,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
           description: `El cliente ${values.firstName} ${values.lastName} ha sido ${isEditMode ? 'actualizado' : 'creado'} exitosamente.`,
         });
         router.push('/dashboard');
-        router.refresh(); 
+        router.refresh();
       } else {
         if (result.errors) {
           Object.entries(result.errors).forEach(([field, messages]) => {
@@ -192,14 +267,102 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
       }
     } catch (error) {
       toast({
-        title: 'Error',
-        description: `Ocurrió un error inesperado. Por favor, inténtelo de nuevo.`,
+        title: 'Error Inesperado',
+        description: `Ocurrió un error. ${error instanceof Error ? error.message : String(error)}`,
         variant: 'destructive',
       });
     } finally {
       setIsSubmitting(false);
     }
   }
+
+  const renderNumberInput = (name: "contractValue" | "downPaymentPercentage" | "paymentAmount", label: string, placeholder: string, description?: string, isOptional: boolean = true) => (
+    <FormField
+      control={form.control}
+      name={name}
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>{label}</FormLabel>
+          <FormControl>
+            <Input
+              type="number"
+              step={name === "downPaymentPercentage" ? "1" : "0.01"}
+              placeholder={placeholder}
+              value={field.value === undefined || field.value === null || isNaN(Number(field.value)) ? "" : String(field.value)}
+              onChange={e => {
+                const val = e.target.value;
+                if (val === "") {
+                  field.onChange(undefined);
+                } else {
+                  const num = parseFloat(val);
+                  field.onChange(isNaN(num) ? undefined : num); // Keep undefined if parse fails for optional fields
+                }
+              }}
+              onBlur={field.onBlur} // Keep RHF blur handling
+              ref={field.ref}
+              name={field.name}
+              disabled={field.disabled}
+            />
+          </FormControl>
+          {description && <FormDescription>{description}</FormDescription>}
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  );
+  
+const FileInputField = ({
+    name,
+    label,
+    fileState,
+    onFileChange,
+    existingFileUrl,
+    existingFileName,
+  }: {
+    name: 'acceptanceLetterFile' | 'contractFileFile';
+    label: string;
+    fileState: FileUploadState;
+    onFileChange: (file: File) => void;
+    existingFileUrl?: string;
+    existingFileName?: string;
+  }) => (
+    <FormItem>
+      <FormLabel>{label}</FormLabel>
+      {existingFileUrl && !fileState.file && !fileState.isUploading &&(
+        <div className="text-sm text-muted-foreground mb-2 p-2 border rounded-md">
+          Archivo actual: <a href={existingFileUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-1"><LinkIcon size={14}/> {existingFileName || 'Ver archivo'}</a>
+        </div>
+      )}
+      <FormControl>
+        <div className="flex items-center gap-2">
+          <Input
+            type="file"
+            onChange={(e) => e.target.files?.[0] && onFileChange(e.target.files[0])}
+            className="flex-grow"
+            disabled={fileState.isUploading || isSubmitting}
+          />
+        </div>
+      </FormControl>
+      {fileState.isUploading && (
+        <div className="mt-2">
+          <Progress value={fileState.progress} className="w-full h-2" />
+          <p className="text-xs text-muted-foreground mt-1">Subiendo: {fileState.file?.name} ({fileState.progress.toFixed(0)}%)</p>
+        </div>
+      )}
+      {fileState.url && !fileState.isUploading && (
+        <div className="mt-2 text-sm text-green-600 flex items-center gap-1">
+          <CheckCircle2 size={16} /> ¡{fileState.name} subido con éxito!
+        </div>
+      )}
+      {fileState.error && !fileState.isUploading &&(
+        <div className="mt-2 text-sm text-destructive flex items-center gap-1">
+          <XCircle size={16} /> Error: {fileState.error}
+        </div>
+      )}
+      <FormMessage />
+    </FormItem>
+  );
+
 
   return (
     <Card>
@@ -215,128 +378,46 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
             <Card>
               <CardHeader><CardTitle className="text-xl">Información Personal</CardTitle></CardHeader>
               <CardContent className="space-y-6">
+                {/* Personal Info Fields */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <FormField
-                    control={form.control}
-                    name="firstName"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Nombres</FormLabel>
-                        <FormControl><Input placeholder="Juan" {...field} /></FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="lastName"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Apellidos</FormLabel>
-                        <FormControl><Input placeholder="Pérez" {...field} /></FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  <FormField control={form.control} name="firstName" render={({ field }) => (<FormItem><FormLabel>Nombres</FormLabel><FormControl><Input placeholder="Juan" {...field} /></FormControl><FormMessage /></FormItem>)} />
+                  <FormField control={form.control} name="lastName" render={({ field }) => (<FormItem><FormLabel>Apellidos</FormLabel><FormControl><Input placeholder="Pérez" {...field} /></FormControl><FormMessage /></FormItem>)} />
                 </div>
-                <FormField
-                  control={form.control}
-                  name="email"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Correo Electrónico</FormLabel>
-                      <FormControl><Input type="email" placeholder="juan.perez@example.com" {...field} /></FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="phoneNumber"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Número de Teléfono</FormLabel>
-                      <FormControl><Input placeholder="3001234567" {...field} /></FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                <FormField control={form.control} name="email" render={({ field }) => (<FormItem><FormLabel>Correo Electrónico</FormLabel><FormControl><Input type="email" placeholder="juan.perez@example.com" {...field} /></FormControl><FormMessage /></FormItem>)} />
+                <FormField control={form.control} name="phoneNumber" render={({ field }) => (<FormItem><FormLabel>Número de Teléfono</FormLabel><FormControl><Input placeholder="3001234567" {...field} /></FormControl><FormMessage /></FormItem>)} />
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader><CardTitle className="text-xl">Información del Contrato y Financiación</CardTitle></CardHeader>
               <CardContent className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <FormField
-                    control={form.control}
-                    name="contractValue"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Valor del Contrato (antes de IVA)</FormLabel>
-                        <FormControl><Input type="number" step="0.01" placeholder="1000000" {...field} onChange={e => field.onChange(parseFloat(e.target.value) || 0)} /></FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="downPayment"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Valor de Abono</FormLabel>
-                        <FormControl><Input type="number" step="0.01" placeholder="100000" {...field} onChange={e => field.onChange(parseFloat(e.target.value) || 0)}/></FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-                 <FormField
-                    control={form.control}
-                    name="paymentMethod"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Medio de Pago (Abono/Contrato)</FormLabel>
-                        <Select onValueChange={field.onChange} defaultValue={field.value}>
-                          <FormControl><SelectTrigger><SelectValue placeholder="Seleccione un medio de pago" /></SelectTrigger></FormControl>
-                          <SelectContent>
-                            {PAYMENT_METHODS.map(method => <SelectItem key={method} value={method}>{method}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                <FormField
-                  control={form.control}
-                  name="financingPlan"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Plan de Financiación</FormLabel>
-                      <Select onValueChange={(value) => field.onChange(Number(value))} defaultValue={String(field.value)}>
+                {renderNumberInput("contractValue", "Valor del Contrato (antes de IVA)", "1000000")}
+                {renderNumberInput("downPaymentPercentage", "Porcentaje de Abono (%)", "10", "Ingrese un valor entre 0 y 100.")}
+                
+                <FormField control={form.control} name="paymentMethod" render={({ field }) => (
+                    <FormItem><FormLabel>Medio de Pago (Abono/Contrato)</FormLabel><Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <FormControl><SelectTrigger><SelectValue placeholder="Seleccione un medio de pago" /></SelectTrigger></FormControl>
+                        <SelectContent>{PAYMENT_METHODS.map(method => <SelectItem key={method} value={method}>{method}</SelectItem>)}</SelectContent></Select><FormMessage />
+                    </FormItem>)}
+                />
+                <FormField control={form.control} name="financingPlan" render={({ field }) => (
+                    <FormItem><FormLabel>Plan de Financiación</FormLabel><Select onValueChange={(value) => field.onChange(Number(value))} defaultValue={String(field.value)}>
                         <FormControl><SelectTrigger><SelectValue placeholder="Seleccione un plan" /></SelectTrigger></FormControl>
-                        <SelectContent>
-                          {Object.entries(FINANCING_OPTIONS).map(([key, option]) => (
-                            <SelectItem key={key} value={key}>{option.label} {option.rate > 0 ? `(${(option.rate * 100).toFixed(0)}% interés aprox.)` : ''}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormDescription>Las tasas de interés son ejemplos y deben ajustarse a la ley.</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+                        <SelectContent>{Object.entries(FINANCING_OPTIONS).map(([key, option]) => (<SelectItem key={key} value={key}>{option.label} {option.rate > 0 ? `(${(option.rate * 100).toFixed(0)}% interés aprox.)` : ''}</SelectItem>))}</SelectContent>
+                        </Select><FormDescription>Las tasas de interés son ejemplos y deben ajustarse a la ley.</FormDescription><FormMessage />
+                    </FormItem>)}
                 />
               </CardContent>
             </Card>
             
-            {showFinancingDetails && watchedContractValue && watchedContractValue > 0 && (
+            {showFinancingDetails && (watchedContractValue ?? 0) > 0 && (
               <Card className="bg-muted/30">
                 <CardHeader><CardTitle className="text-lg">Resumen de Financiación (Calculado)</CardTitle></CardHeader>
                 <CardContent className="space-y-3 text-sm">
                   <div className="flex justify-between"><span>Valor Contrato:</span> <strong>{formatCurrency(watchedContractValue || 0)}</strong></div>
-                  <div className="flex justify-between"><span>IVA ({IVA_RATE * 100}%):</span> <strong>{formatCurrency(calculatedValues.ivaAmount)}</strong></div>
+                  <div className="flex justify-between"><span>IVA ({(IVA_RATE * 100).toFixed(0)}%):</span> <strong>{formatCurrency(calculatedValues.ivaAmount)}</strong></div>
                   <div className="flex justify-between"><span>Total con IVA:</span> <strong>{formatCurrency(calculatedValues.totalWithIva)}</strong></div>
-                  <div className="flex justify-between"><span>Abono:</span> <strong>{formatCurrency(watchedDownPayment || 0)}</strong></div>
+                  <div className="flex justify-between"><span>Abono ({watchedDownPaymentPercentage || 0}% del Total con IVA):</span> <strong>{formatCurrency(calculatedValues.calculatedDownPayment)}</strong></div>
                   <hr/>
                   <div className="flex justify-between"><span>Saldo a Financiar:</span> <strong className="text-base">{formatCurrency(calculatedValues.amountToFinance)}</strong></div>
                   <div className="flex justify-between"><span>Tasa Interés Aplicada:</span> <strong>{(calculatedValues.financingInterestRateApplied * 100).toFixed(2)}%</strong></div>
@@ -351,50 +432,49 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
             <Card>
               <CardHeader><CardTitle className="text-xl">Configuración de Pago Mensual</CardTitle></CardHeader>
               <CardContent className="space-y-6">
-                <FormField
-                  control={form.control}
-                  name="paymentDayOfMonth"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Día de Pago de la Cuota del Mes</FormLabel>
-                      <FormControl><Input type="number" min="1" max="31" placeholder="15" {...field} onChange={e => field.onChange(parseInt(e.target.value))} /></FormControl>
-                      <FormDescription>Día (1-31) en que se generará el cobro de la cuota mensual.</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+                <FormField control={form.control} name="paymentDayOfMonth" render={({ field }) => (
+                    <FormItem><FormLabel>Día de Pago de la Cuota del Mes</FormLabel>
+                        <FormControl><Input type="number" min="1" max="31" placeholder="15" 
+                            value={field.value === undefined || isNaN(Number(field.value)) ? "" : String(field.value)}
+                            onChange={e => field.onChange(e.target.value === "" ? undefined : parseInt(e.target.value, 10))}
+                         /></FormControl>
+                        <FormDescription>Día (1-31) en que se generará el cobro de la cuota mensual.</FormDescription><FormMessage />
+                    </FormItem>)}
                 />
-                {(!showFinancingDetails || !(watchedContractValue && watchedContractValue > 0)) && (
-                    <FormField
-                    control={form.control}
-                    name="paymentAmount"
-                    render={({ field }) => (
-                        <FormItem>
-                        <FormLabel>Monto de Pago Recurrente (si no hay financiación)</FormLabel>
-                        <FormControl>
-                            <Input 
-                            type="number" 
-                            step="0.01" 
-                            placeholder="50000" 
-                            {...field} 
-                            onChange={e => field.onChange(parseFloat(e.target.value) || undefined)}
-                            value={field.value ?? ""}
-                            />
-                        </FormControl>
-                        <FormDescription>Si no hay un plan de financiación activo, ingrese el monto del servicio recurrente.</FormDescription>
-                        <FormMessage />
-                        </FormItem>
-                    )}
-                    />
+                {(!showFinancingDetails || !((watchedContractValue ?? 0) > 0)) && (
+                  renderNumberInput("paymentAmount", "Monto de Pago Recurrente (si no hay financiación)", "50000", "Si no hay plan de financiación activo, ingrese el monto del servicio recurrente.")
                 )}
               </CardContent>
             </Card>
 
+            <Card>
+              <CardHeader><CardTitle className="text-xl">Documentos del Cliente</CardTitle></CardHeader>
+              <CardContent className="space-y-6">
+                <FileInputField
+                  name="acceptanceLetterFile"
+                  label="Carta de Aceptación del Contrato"
+                  fileState={acceptanceLetterState}
+                  onFileChange={(file) => handleFileUpload(file, 'acceptanceLetter', setAcceptanceLetterState)}
+                  existingFileUrl={form.getValues('acceptanceLetterUrl')}
+                  existingFileName={form.getValues('acceptanceLetterFileName')}
+                />
+                <FileInputField
+                  name="contractFileFile"
+                  label="Contrato Firmado"
+                  fileState={contractFileState}
+                  onFileChange={(file) => handleFileUpload(file, 'contractFile', setContractFileState)}
+                  existingFileUrl={form.getValues('contractFileUrl')}
+                  existingFileName={form.getValues('contractFileName')}
+                />
+              </CardContent>
+            </Card>
+
             <div className="flex justify-end gap-2 pt-4">
-              <Button type="button" variant="outline" onClick={() => router.back()} disabled={isSubmitting}>
+              <Button type="button" variant="outline" onClick={() => router.back()} disabled={isSubmitting || acceptanceLetterState.isUploading || contractFileState.isUploading}>
                 Cancelar
               </Button>
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              <Button type="submit" disabled={isSubmitting || acceptanceLetterState.isUploading || contractFileState.isUploading}>
+                {(isSubmitting || acceptanceLetterState.isUploading || contractFileState.isUploading) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {isEditMode ? 'Guardar Cambios' : 'Crear Cliente'}
               </Button>
             </div>
@@ -404,3 +484,4 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
     </Card>
   );
 }
+
