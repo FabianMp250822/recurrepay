@@ -2,7 +2,7 @@
 'use client'; 
 
 import Link from 'next/link';
-import { PlusCircle, Edit3, Users as UsersIconLucide, FileText, DollarSign, Link as LinkIconLucide, Loader2, Terminal, CreditCard as CreditCardIcon, CheckCircle, MessageSquare } from 'lucide-react'; // Added MessageSquare
+import { PlusCircle, Edit3, Users as UsersIconLucide, FileText, DollarSign, Link as LinkIconLucide, Loader2, Terminal, CreditCard as CreditCardIcon, CheckCircle, MessageSquare } from 'lucide-react';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import {
@@ -23,8 +23,8 @@ import {
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import AppLayout from '@/components/layout/app-layout';
-import { getClients } from '@/lib/store';
-import { formatDate, formatCurrency, getDaysUntilDue, cleanPhoneNumberForWhatsApp } from '@/lib/utils'; // Added cleanPhoneNumberForWhatsApp
+import { getClients, getFinancingOptionsMap } from '@/lib/store'; // Ensured getFinancingOptionsMap is imported
+import { formatDate, formatCurrency, getDaysUntilDue, cleanPhoneNumberForWhatsApp } from '@/lib/utils';
 import DeleteClientDialog from '@/components/clients/delete-client-dialog';
 import RegisterPaymentButton from '@/components/clients/RegisterPaymentButton'; 
 import type { Client } from '@/types';
@@ -34,10 +34,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { FINANCING_OPTIONS } from '@/lib/constants';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useAuth } from '@/contexts/AuthContext';
 import { Input } from '@/components/ui/input'; // For search
+
+type FinancingOptionsMap = { [key: number]: { rate: number; label: string } };
 
 export default function ClientsListPage() {
   const [clients, setClients] = useState<Client[]>([]);
@@ -45,8 +46,9 @@ export default function ClientsListPage() {
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const { user, isAdmin, initialLoadComplete } = useAuth();
+  const [financingOptions, setFinancingOptions] = useState<FinancingOptionsMap>({}); // State for financing options
 
-  const fetchClientsCallback = useCallback(async () => {
+  const fetchClientsAndOptions = useCallback(async () => {
     if (!initialLoadComplete || !isAdmin) {
       if (initialLoadComplete && !isAdmin) {
          setError("Acceso denegado. No tiene permisos para ver esta información.");
@@ -57,12 +59,16 @@ export default function ClientsListPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const fetchedClients = await getClients();
+      const [fetchedClients, finOptions] = await Promise.all([
+        getClients(),
+        getFinancingOptionsMap() // Fetch financing options
+      ]);
       setClients(fetchedClients);
+      setFinancingOptions(finOptions); // Store financing options in state
     } catch (err: any) {
-      console.error("Error fetching clients on clients list page. AuthContext state: ", { userUid: user?.uid, isAdminContext: isAdmin, initialLoadCompleteContext: initialLoadComplete }, err);
-      const detailedError = err.message || 'Error al cargar los clientes. Por favor, inténtelo de nuevo.';
-      setError(detailedError.includes("permission denied") || detailedError.includes("Permiso denegado") ? "Permiso denegado por Firestore al buscar clientes. Asegúrese de que las reglas de seguridad de Firebase permitan el acceso de lectura a la colección 'listapagospendiendes' para administradores autenticados y activos, y que su cuenta de administrador esté configurada correctamente con el estado 'activo: true'." : detailedError);
+      console.error("Error fetching data on clients list page. AuthContext state: ", { userUid: user?.uid, isAdminContext: isAdmin, initialLoadCompleteContext: initialLoadComplete }, err);
+      const detailedError = err.message || 'Error al cargar los datos. Por favor, inténtelo de nuevo.';
+      setError(detailedError.includes("permission denied") || detailedError.includes("Permiso denegado") ? "Permiso denegado por Firestore al buscar clientes/opciones. Asegúrese de que las reglas de seguridad de Firebase permitan el acceso de lectura requerido para administradores autenticados y activos, y que su cuenta de administrador esté configurada correctamente con el estado 'activo: true'." : detailedError);
     } finally {
       setIsLoading(false);
     }
@@ -71,14 +77,14 @@ export default function ClientsListPage() {
   useEffect(() => {
     if (initialLoadComplete) {
       if (isAdmin) {
-        fetchClientsCallback();
+        fetchClientsAndOptions();
       } else {
         setError("Acceso denegado. No es un administrador autorizado.");
         setIsLoading(false);
         setClients([]);
       }
     }
-  }, [initialLoadComplete, isAdmin, fetchClientsCallback]);
+  }, [initialLoadComplete, isAdmin, fetchClientsAndOptions]);
 
   const filteredClients = useMemo(() => {
     if (!searchTerm) return clients;
@@ -113,7 +119,7 @@ export default function ClientsListPage() {
 
   const generateWhatsAppLink = (client: Client) => {
     const cleanedPhoneNumber = cleanPhoneNumberForWhatsApp(client.phoneNumber);
-    if (!cleanedPhoneNumber) return "#"; // Fallback si el número no es válido
+    if (!cleanedPhoneNumber) return "#"; 
 
     const daysUntilDue = getDaysUntilDue(client.nextPaymentDate);
     let specificMessagePart = "";
@@ -132,7 +138,7 @@ export default function ClientsListPage() {
       specificMessagePart = `su próximo pago de ${formatCurrency(client.paymentAmount)}.`;
     }
     
-    const message = `Hola ${client.firstName}, le recordamos desde RecurPay sobre ${specificMessagePart} Por favor, realice su pago a la brevedad. ¡Gracias!`;
+    const message = `Hola ${client.firstName}, le recordamos sobre ${specificMessagePart} Por favor, realice su pago a la brevedad. ¡Gracias!`;
     return `https://wa.me/${cleanedPhoneNumber}?text=${encodeURIComponent(message)}`;
   };
   
@@ -167,7 +173,7 @@ export default function ClientsListPage() {
           <AlertDescription>
             {error}
              {error.toLowerCase().includes("permission denied") || error.toLowerCase().includes("permiso denegado") ? (
-                 <p className="mt-2 text-xs">Asegúrese de que las reglas de seguridad de Firestore permitan el acceso de lectura a la colección 'listapagospendiendes' para administradores autenticados y activos, y que su cuenta de administrador esté configurada correctamente con el estado 'activo: true'.</p>
+                 <p className="mt-2 text-xs">Asegúrese de que las reglas de seguridad de Firestore permitan el acceso de lectura requerido y que su cuenta de administrador esté configurada correctamente.</p>
             ) : null}
           </AlertDescription>
         </Alert>
@@ -265,6 +271,11 @@ export default function ClientsListPage() {
               {filteredClients.map((client: Client) => {
                 const daysUntilDueClient = getDaysUntilDue(client.nextPaymentDate);
                 const canSendWhatsAppReminder = client.paymentAmount > 0 && client.status !== 'completed' && daysUntilDueClient >= -5 && daysUntilDueClient <= 5;
+                
+                // Use financingOptions from state to get the label
+                const financingPlanLabel = client.financingPlan !== undefined && financingOptions[client.financingPlan] 
+                                          ? financingOptions[client.financingPlan].label 
+                                          : (client.contractValue && client.contractValue > 0 && client.paymentAmount === 0 ? <span className="text-muted-foreground">Pago único</span> : <span className="text-muted-foreground">N/A</span>);
 
                 return (
                 <TableRow key={client.id}>
@@ -277,9 +288,7 @@ export default function ClientsListPage() {
                     {client.paymentAmount > 0 ? formatCurrency(client.paymentAmount) : <span className="text-muted-foreground">-</span>}
                   </TableCell>
                   <TableCell className="hidden sm:table-cell">
-                    {client.financingPlan && client.financingPlan !== 0 && FINANCING_OPTIONS[client.financingPlan]
-                      ? FINANCING_OPTIONS[client.financingPlan].label
-                      : client.contractValue && client.contractValue > 0 && client.paymentAmount === 0 ? <span className="text-muted-foreground">Pago único</span> : <span className="text-muted-foreground">N/A</span>}
+                    {financingPlanLabel}
                   </TableCell>
                   <TableCell className="hidden lg:table-cell">
                     <div className="flex flex-col gap-1 text-xs">
@@ -353,5 +362,3 @@ export default function ClientsListPage() {
     </AppLayout>
   );
 }
-
-    

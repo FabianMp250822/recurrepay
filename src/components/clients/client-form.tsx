@@ -28,13 +28,16 @@ import { clientSchema } from '@/lib/schema';
 import type { Client, ClientFormData } from '@/types';
 import { createClientAction, updateClientAction } from '@/app/actions/clientActions';
 import { Loader2, UploadCloud, FileText, CheckCircle2, XCircle, LinkIcon } from 'lucide-react';
-import { IVA_RATE, FINANCING_OPTIONS, PAYMENT_METHODS } from '@/lib/constants';
+import { IVA_RATE, PAYMENT_METHODS } from '@/lib/constants'; // Removed FINANCING_OPTIONS
+import { getFinancingOptionsMap } from '@/lib/store'; // Import to fetch options
 import { formatCurrency } from '@/lib/utils';
 
 type ClientFormProps = {
   client?: Client;
   isEditMode: boolean;
 };
+
+type FinancingOptionsMapType = { [key: number]: { rate: number; label: string } };
 
 type CalculatedValues = {
   ivaAmount: number;
@@ -73,6 +76,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
 
   const [acceptanceLetterState, setAcceptanceLetterState] = useState<FileUploadState>(initialFileUploadState);
   const [contractFileState, setContractFileState] = useState<FileUploadState>(initialFileUploadState);
+  const [financingOptions, setFinancingOptions] = useState<FinancingOptionsMapType>({});
 
   const [calculatedValues, setCalculatedValues] = useState<CalculatedValues>({
     ivaAmount: 0,
@@ -105,6 +109,24 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
     },
   });
 
+  useEffect(() => {
+    async function loadFinancingOptions() {
+      try {
+        const options = await getFinancingOptionsMap();
+        setFinancingOptions(options);
+      } catch (error) {
+        console.error("Error fetching financing options for form:", error);
+        toast({
+          title: "Error",
+          description: "No se pudieron cargar las opciones de financiación. Usando valores por defecto.",
+          variant: "destructive",
+        });
+        // Fallback or use default constants if needed, though store should handle defaults
+      }
+    }
+    loadFinancingOptions();
+  }, [toast]);
+
   const watchedContractValue = form.watch('contractValue');
   const watchedDownPaymentPercentage = form.watch('downPaymentPercentage');
   const watchedFinancingPlan = form.watch('financingPlan');
@@ -121,11 +143,11 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
     const totalWithIva = cv + ivaAmount;
     const calculatedDownPayment = totalWithIva * (dpPerc / 100);
     
-    setShowFinancingDetails(financingPlanKey !== 0 && cv > 0);
+    setShowFinancingDetails(financingPlanKey !== 0 && cv > 0 && Object.keys(financingOptions).length > 0);
 
-    if (financingPlanKey !== 0 && cv > 0) {
+    if (financingPlanKey !== 0 && cv > 0 && financingOptions[financingPlanKey]) {
       const amountToFinance = Math.max(0, totalWithIva - calculatedDownPayment);
-      const planDetails = FINANCING_OPTIONS[financingPlanKey];
+      const planDetails = financingOptions[financingPlanKey];
       const interestRate = planDetails ? planDetails.rate : 0;
       const financingInterestAmount = amountToFinance * interestRate;
       const totalAmountWithInterest = amountToFinance + financingInterestAmount;
@@ -155,11 +177,11 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
         monthlyInstallment: 0,
       });
       // If not financing, paymentAmount relies on user input (or pre-existing value in edit mode)
-      if (!isEditMode || !client?.paymentAmount) {
+      // if (!isEditMode || !client?.paymentAmount) {
         // form.setValue('paymentAmount', undefined); // Keep user input if any, or clear if new form
-      }
+      // }
     }
-  }, [watchedContractValue, watchedDownPaymentPercentage, watchedFinancingPlan, form, client?.paymentAmount, isEditMode]);
+  }, [watchedContractValue, watchedDownPaymentPercentage, watchedFinancingPlan, form, financingOptions, isEditMode, client?.paymentAmount]);
 
 
   const handleFileUpload = useCallback(async (
@@ -177,21 +199,18 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
         description: "Por favor, ingrese un correo electrónico válido para el cliente antes de subir archivos.",
         variant: "destructive",
       });
-      // Reset the file input visually if possible, or at least prevent upload state
-      setState(prev => ({ ...prev, file: null, isUploading: false, error: "Email is required for upload path." }));
-      // Clear the file input so user can re-select if they wish after fixing email
-      const fileInput = document.getElementById(`${fileType}-file-input`) as HTMLInputElement; // Assuming you add ids to your inputs
+      setState(prev => ({ ...prev, file: null, isUploading: false, error: "Se requiere correo para la ruta de subida." }));
+      const fileInput = document.getElementById(`${fileType}-file-input`) as HTMLInputElement;
       if (fileInput) fileInput.value = "";
       return;
     }
     
     const clientEmail = form.getValues("email");
-    if (!clientEmail) { // Should be caught by trigger, but as a safeguard
+    if (!clientEmail) {
         toast({ title: "Error", description: "El correo electrónico del cliente no puede estar vacío para subir archivos.", variant: "destructive" });
         return;
     }
 
-    // Diagnostic log
     console.log(
       'Attempting file upload. Current Firebase Auth User UID:', auth.currentUser?.uid,
       'Email:', auth.currentUser?.email
@@ -200,7 +219,9 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
 
     setState(prev => ({ ...prev, isUploading: true, file, progress: 0, error: null }));
     const uniqueFileName = `${fileType}_${Date.now()}_${file.name}`;
-    const storagePath = `client_documents/${clientEmail}/${uniqueFileName}`;
+    // Use clientEmail (validated) or a fallback if still somehow empty, though previous checks should prevent this.
+    const clientIdentifier = clientEmail.trim() ? clientEmail.trim().replace(/[^a-zA-Z0-9_.-]/g, '_') : 'unknown_client';
+    const storagePath = `client_documents/${clientIdentifier}/${uniqueFileName}`;
     const storageRef = ref(storage, storagePath);
     const uploadTask = uploadBytesResumable(storageRef, file);
 
@@ -210,7 +231,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
         setState(prev => ({ ...prev, progress }));
       },
       (error) => {
-        console.error(`Upload error (${fileType}):`, error);
+        console.error(`Error al subir archivo (${fileType}):`, error);
         setState(prev => ({ ...prev, isUploading: false, error: error.message, progress: 0 }));
         toast({ title: `Error al subir ${fileType === 'acceptanceLetter' ? 'carta de aceptación' : 'contrato'}`, description: error.message, variant: 'destructive' });
       },
@@ -244,7 +265,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
       contractFileName: contractFileState.name || values.contractFileName,
     };
     
-    if (dataToSubmit.financingPlan && dataToSubmit.financingPlan !== 0 && dataToSubmit.contractValue && dataToSubmit.contractValue > 0) {
+    if (dataToSubmit.financingPlan && dataToSubmit.financingPlan !== 0 && dataToSubmit.contractValue && dataToSubmit.contractValue > 0 && Object.keys(financingOptions).length > 0) {
       dataToSubmit.paymentAmount = parseFloat(calculatedValues.monthlyInstallment.toFixed(2));
     } else {
       if (typeof values.paymentAmount !== 'number' || values.paymentAmount <= 0) {
@@ -253,7 +274,6 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
             setIsSubmitting(false);
             return;
         }
-         // if contractValue > 0 but no financing plan, payment amount is also mandatory
         if (values.contractValue && values.contractValue > 0 && values.financingPlan === 0) {
              form.setError('paymentAmount', {type: 'manual', message: 'Debe ingresar un monto de pago si el contrato es de pago único (sin financiación).'});
              setIsSubmitting(false);
@@ -276,7 +296,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
           title: isEditMode ? 'Cliente Actualizado' : 'Cliente Creado',
           description: `El cliente ${values.firstName} ${values.lastName} ha sido ${isEditMode ? 'actualizado' : 'creado'} exitosamente.`,
         });
-        router.push('/dashboard');
+        router.push('/clients');
         router.refresh();
       } else {
         if (result.errors) {
@@ -339,7 +359,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
   );
   
 const FileInputField = ({
-    id, // Added id prop
+    id,
     name,
     label,
     fileState,
@@ -347,7 +367,7 @@ const FileInputField = ({
     existingFileUrl,
     existingFileName,
   }: {
-    id: string; // Added id prop
+    id: string;
     name: 'acceptanceLetterFile' | 'contractFileFile';
     label: string;
     fileState: FileUploadState;
@@ -365,7 +385,7 @@ const FileInputField = ({
       <FormControl>
         <div className="flex items-center gap-2">
           <Input
-            id={id} // Use the id prop here
+            id={id}
             type="file"
             onChange={(e) => e.target.files?.[0] && onFileChange(e.target.files[0])}
             className="flex-grow"
@@ -386,7 +406,7 @@ const FileInputField = ({
       )}
       {fileState.error && !fileState.isUploading &&(
         <div className="mt-2 text-sm text-destructive flex items-center gap-1">
-          <XCircle size={16} /> Error: {fileState.error === "Email is required for upload path." ? "Se requiere correo para la ruta de subida." : fileState.error}
+          <XCircle size={16} /> Error: {fileState.error === "Se requiere correo para la ruta de subida." ? "Se requiere correo para la ruta de subida." : fileState.error}
         </div>
       )}
       <FormMessage />
@@ -433,7 +453,10 @@ const FileInputField = ({
                 <FormField control={form.control} name="financingPlan" render={({ field }) => (
                     <FormItem><FormLabel>Plan de Financiación</FormLabel><Select onValueChange={(value) => field.onChange(Number(value))} defaultValue={String(field.value)}>
                         <FormControl><SelectTrigger><SelectValue placeholder="Seleccione un plan" /></SelectTrigger></FormControl>
-                        <SelectContent>{Object.entries(FINANCING_OPTIONS).map(([key, option]) => (<SelectItem key={key} value={key}>{option.label} {option.rate > 0 ? `(${(option.rate * 100).toFixed(0)}% interés aprox.)` : ''}</SelectItem>))}</SelectContent>
+                        <SelectContent>{Object.keys(financingOptions).length > 0 ? 
+                            Object.entries(financingOptions).map(([key, option]) => (<SelectItem key={key} value={key}>{option.label} {option.rate > 0 ? `(${(option.rate * 100).toFixed(0)}% interés aprox.)` : ''}</SelectItem>))
+                            : <SelectItem value="0" disabled>Cargando planes...</SelectItem>}
+                        </SelectContent>
                         </Select><FormDescription>Las tasas de interés son ejemplos y deben ajustarse a la ley.</FormDescription><FormMessage />
                     </FormItem>)}
                 />
@@ -481,7 +504,7 @@ const FileInputField = ({
               <CardHeader><CardTitle className="text-xl">Documentos del Cliente</CardTitle></CardHeader>
               <CardContent className="space-y-6">
                 <FileInputField
-                  id="acceptanceLetter-file-input" // Added ID
+                  id="acceptanceLetter-file-input"
                   name="acceptanceLetterFile"
                   label="Carta de Aceptación del Contrato"
                   fileState={acceptanceLetterState}
@@ -490,7 +513,7 @@ const FileInputField = ({
                   existingFileName={form.getValues('acceptanceLetterFileName')}
                 />
                 <FileInputField
-                  id="contractFile-file-input" // Added ID
+                  id="contractFile-file-input"
                   name="contractFileFile"
                   label="Contrato Firmado"
                   fileState={contractFileState}
