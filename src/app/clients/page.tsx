@@ -93,8 +93,13 @@ export default function ClientsListPage() {
 
 
   function getPaymentStatusBadge(client: Client): React.ReactElement {
-    if (client.status === 'completed' || client.paymentAmount === 0) {
+    if (client.status === 'completed' || (client.paymentAmount === 0 && client.contractValue && client.contractValue > 0)) {
       return <Badge variant="default" className="bg-green-600 hover:bg-green-700">Completado</Badge>;
+    }
+    if (client.paymentAmount === 0 && (!client.contractValue || client.contractValue === 0)) {
+         // This case might represent a client with no recurring payment and no contract, or a completed simple service.
+         // Depending on business logic, could be 'Inactivo' or 'Completado'. For now, we stick to 'Completado' if paymentAmount is 0.
+        return <Badge variant="default" className="bg-green-600 hover:bg-green-700">Completado</Badge>;
     }
     const daysUntil = getDaysUntilDue(client.nextPaymentDate);
     if (daysUntil < 0) {
@@ -273,7 +278,7 @@ export default function ClientsListPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex gap-1 sm:gap-2 justify-end">
-                      {client.paymentAmount > 0 && client.status === 'active' && <RegisterPaymentButton client={client} />}
+                      {client.paymentAmount > 0 && client.status !== 'completed' && <RegisterPaymentButton client={client} />}
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -289,7 +294,7 @@ export default function ClientsListPage() {
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
-                      {client.paymentAmount > 0 && client.status === 'active' && (
+                      {client.paymentAmount > 0 && client.status !== 'completed' && (
                         <SendReminderButton client={client} daysUntilDue={daysUntilDueForClient} />
                       )}
                       <DeleteClientDialog clientId={client.id} clientName={`${client.firstName} ${client.lastName}`} />
