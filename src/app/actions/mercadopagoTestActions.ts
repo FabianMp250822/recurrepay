@@ -12,12 +12,17 @@ export async function testMercadoPagoPreferenceCreation() {
   }
 
   try {
-    console.log("Iniciando prueba de Mercado Pago con Access Token:", accessToken.substring(0, 15) + "..."); // No loguear el token completo en producción real
+    // Log para ayudar a verificar el Access Token que se está usando (sin mostrarlo completo)
+    const tokenDisplay = accessToken.length > 10 ? `${accessToken.substring(0, 8)}...${accessToken.substring(accessToken.length - 4)}` : "Token muy corto para mostrar extracto";
+    console.log("Iniciando prueba de Mercado Pago con Access Token:", tokenDisplay);
 
     const client = new MercadoPagoConfig({ accessToken: accessToken, options: { timeout: 5000 } });
     const preference = new Preference(client);
 
     console.log("Creando preferencia de prueba...");
+    // Usando un correo de pagador de prueba más específico
+    const testPayerEmail = "test_user_1921133160@testuser.com"; // Derivado de TESTUSER1921133160
+
     const result = await preference.create({
       body: {
         items: [
@@ -26,22 +31,22 @@ export async function testMercadoPagoPreferenceCreation() {
             title: 'Producto de Prueba RecurPay',
             quantity: 1,
             unit_price: 100.50,
-            currency_id: 'COP', // Asegúrate que esta moneda es aceptada por tus credenciales de prueba
+            currency_id: 'COP', 
             description: 'Descripción del producto de prueba',
-            category_id: 'services', // O una categoría válida
+            category_id: 'services', 
           },
         ],
         payer: {
-          email: 'test_user@testuser.com', // Email de prueba
+          email: testPayerEmail, 
         },
         back_urls: {
-          success: 'http://localhost:3000/success', // URLs de ejemplo
+          success: 'http://localhost:3000/success', 
           failure: 'http://localhost:3000/failure',
           pending: 'http://localhost:3000/pending',
         },
         auto_return: 'approved',
         external_reference: 'RecurPayTest_12345',
-        notification_url: 'https://example.com/api/mp_webhook', // URL de webhook de ejemplo
+        notification_url: 'https://example.com/api/mp_webhook', 
       },
     });
 
@@ -56,10 +61,16 @@ export async function testMercadoPagoPreferenceCreation() {
     }
   } catch (error: any) {
     console.error("Error durante la prueba de creación de preferencia de Mercado Pago:", error);
-    // Intentar obtener más detalles del error de Mercado Pago si está disponible
     const errorMessage = error.cause?.message || error.message || "Error desconocido";
     const errorDetails = error.cause || error;
     console.error("Detalles del error de Mercado Pago:", JSON.stringify(errorDetails, null, 2));
+    // Verificar si el error de Mercado Pago tiene un 'status' y 'cause' para un mensaje más específico
+    if (errorDetails && errorDetails.status === 401 && errorDetails.cause?.some((c: any) => c.code === 2002 || c.description?.toLowerCase().includes("invalid token"))) {
+        return { success: false, error: `Error de Mercado Pago (401): Token inválido. Verifica tu MERCADOPAGO_ACCESS_TOKEN.`, details: errorDetails };
+    }
+    if (errorDetails && errorDetails.status === 400 && errorDetails.cause?.some((c: any) => c.code === 2001 || c.description?.toLowerCase().includes("invalid parameters"))) {
+         return { success: false, error: `Error de Mercado Pago (400): Parámetros inválidos. Revisa los datos enviados en la preferencia.`, details: errorDetails };
+    }
     return { success: false, error: `Error al conectar con Mercado Pago: ${errorMessage}`, details: errorDetails };
   }
 }
