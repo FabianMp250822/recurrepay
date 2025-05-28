@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { PlusCircle, Edit3, Trash2, Mail } from 'lucide-react';
+import { PlusCircle, Edit3, UsersIcon as Users } from 'lucide-react'; // Changed UsersIcon import alias
 import { Button } from '@/components/ui/button';
 import {
   Table,
@@ -22,7 +22,15 @@ import AppLayout from '@/components/layout/app-layout';
 import { getClients } from '@/lib/store';
 import { formatDate, formatCurrency, getDaysUntilDue } from '@/lib/utils';
 import DeleteClientDialog from '@/components/clients/delete-client-dialog';
-import { Client } from '@/types';
+import SendReminderButton from '@/components/clients/SendReminderButton'; // New Import
+import type { Client } from '@/types';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+
 
 export default async function DashboardPage() {
   const clients = await getClients();
@@ -33,7 +41,8 @@ export default async function DashboardPage() {
       return <Badge variant="destructive">Overdue</Badge>;
     }
     if (daysUntil <= 3) {
-      return <Badge variant="default" className="bg-yellow-500 text-black hover:bg-yellow-600">Due Soon</Badge>;
+      // Using a Tailwind class directly for yellow as an example, though theme customization is preferred
+      return <Badge className="bg-yellow-500 text-black hover:bg-yellow-600 dark:bg-yellow-600 dark:text-white dark:hover:bg-yellow-700">Due Soon</Badge>;
     }
     if (daysUntil <= 7) {
       return <Badge variant="secondary">Upcoming</Badge>;
@@ -65,7 +74,7 @@ export default async function DashboardPage() {
         <CardContent>
           {clients.length === 0 ? (
             <div className="text-center py-10">
-              <UsersIcon className="mx-auto h-12 w-12 text-muted-foreground" />
+              <Users className="mx-auto h-12 w-12 text-muted-foreground" />
               <h3 className="mt-2 text-sm font-medium text-foreground">No clients found</h3>
               <p className="mt-1 text-sm text-muted-foreground">Get started by adding a new client.</p>
               <div className="mt-6">
@@ -104,12 +113,22 @@ export default async function DashboardPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex gap-2 justify-end">
-                      <Button variant="outline" size="icon" asChild TooltipContent="Edit Client">
-                        <Link href={`/clients/${client.id}/edit`}>
-                          <Edit3 className="h-4 w-4" />
-                           <span className="sr-only">Edit Client</span>
-                        </Link>
-                      </Button>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button variant="outline" size="icon" asChild>
+                              <Link href={`/clients/${client.id}/edit`}>
+                                <Edit3 className="h-4 w-4" />
+                                 <span className="sr-only">Edit Client</span>
+                              </Link>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Edit Client</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <SendReminderButton client={client} />
                       <DeleteClientDialog clientId={client.id} clientName={`${client.firstName} ${client.lastName}`} />
                     </div>
                   </TableCell>
@@ -129,6 +148,8 @@ export default async function DashboardPage() {
   );
 }
 
+// Keeping UsersIcon component as it was used after an alias change.
+// If not UsersIcon, it might be another one (e.g. Users from lucide). Let's assume Users from lucide-react.
 function UsersIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg
