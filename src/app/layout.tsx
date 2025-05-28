@@ -25,15 +25,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es" suppressHydrationWarning>
-      <body className={`${openSans.variable} font-sans antialiased`}>
+    <html lang="es" suppressHydrationWarning><body className={`${openSans.variable} font-sans antialiased`}>
         <AuthProvider>
           <AppProviders>
             {children}
             <Toaster />
           </AppProviders>
         </AuthProvider>
-      </body>
-    </html>
+      </body></html>
   );
 }
