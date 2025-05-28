@@ -2,7 +2,8 @@
 'use client';
 
 import Link from 'next/link';
-import { CreditCard, Menu, Users, LogOut, BarChart3, SettingsIcon } from 'lucide-react'; // Added BarChart3, SettingsIcon
+import Image from 'next/image';
+import { CreditCard, Menu, Users, LogOut, BarChart3, SettingsIcon, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger, SheetClose } from '@/components/ui/sheet';
 import {
@@ -16,12 +17,15 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import { useEffect, useState } from 'react';
+import { fetchGeneralSettingsAction } from '@/app/actions/settingsActions';
+import type { AppGeneralSettings } from '@/types';
+import { Skeleton } from '@/components/ui/skeleton';
 
 const navItems = [
   { href: '/dashboard', label: 'Panel de Analíticas', icon: BarChart3 },
   { href: '/clients', label: 'Clientes', icon: Users },
-  // { href: '/clients/new', label: 'Agregar Cliente', icon: Users }, // Removed to avoid redundancy, covered by sidebar
-  { href: '/settings', label: 'Configuración', icon: SettingsIcon }, // New settings link
+  { href: '/settings', label: 'Configuración', icon: SettingsIcon },
 ];
 
 
@@ -29,14 +33,46 @@ export function AppHeader() {
   const pathname = usePathname();
   const { user, isAdmin, logout, loading, initialLoadComplete } = useAuth();
 
+  const [headerAppName, setHeaderAppName] = useState('RecurPay');
+  const [headerAppLogoUrl, setHeaderAppLogoUrl] = useState<string | null>(null);
+  const [isLoadingHeaderSettings, setIsLoadingHeaderSettings] = useState(true);
+
+  useEffect(() => {
+    async function loadHeaderGeneralSettings() {
+      if (isAdmin && user) {
+        setIsLoadingHeaderSettings(true);
+        try {
+          const settings: AppGeneralSettings = await fetchGeneralSettingsAction();
+          if (settings) {
+            setHeaderAppName(settings.appName || 'RecurPay');
+            setHeaderAppLogoUrl(settings.appLogoUrl || null);
+          }
+        } catch (error) {
+          console.error("Error fetching general settings for header:", error);
+          setHeaderAppName('RecurPay');
+          setHeaderAppLogoUrl(null);
+        } finally {
+          setIsLoadingHeaderSettings(false);
+        }
+      } else {
+        setHeaderAppName('RecurPay');
+        setHeaderAppLogoUrl(null);
+        setIsLoadingHeaderSettings(false);
+      }
+    }
+     if (initialLoadComplete) {
+      loadHeaderGeneralSettings();
+    }
+  }, [isAdmin, user, initialLoadComplete]);
+
   const getPageTitle = () => {
     if (pathname === ('/dashboard')) return 'Panel de Analíticas';
     if (pathname === ('/clients')) return 'Lista de Clientes';
     if (pathname.startsWith('/clients/new')) return 'Crear Nuevo Cliente';
     if (pathname.match(/^\/clients\/[^/]+\/edit$/)) return 'Editar Cliente';
-    if (pathname === ('/settings')) return 'Configuración'; // Title for settings page
+    if (pathname === ('/settings')) return 'Configuración';
     if (pathname.startsWith('/login')) return 'Inicio de Sesión de Administrador';
-    return 'RecurPay';
+    return headerAppName; // Usa el nombre de la app dinámico aquí también
   };
   
   if (!initialLoadComplete || (!isAdmin && pathname !== '/login')) {
@@ -57,15 +93,23 @@ export function AppHeader() {
           </SheetTrigger>
           <SheetContent side="left" className="sm:max-w-xs bg-sidebar text-sidebar-foreground">
             <nav className="grid gap-4 text-lg font-medium p-2">
-              <SheetClose asChild>
-                <Link
-                  href="/dashboard"
-                  className="group flex h-10 w-10 shrink-0 items-center justify-center gap-2 rounded-full bg-primary text-lg font-semibold text-primary-foreground md:text-base mb-4"
-                >
-                  <CreditCard className="h-5 w-5 transition-all group-hover:scale-110" />
-                  <span className="sr-only">RecurPay</span>
-                </Link>
-              </SheetClose>
+                <SheetClose asChild>
+                  <Link
+                    href="/dashboard"
+                    className="group flex h-10 items-center gap-2 rounded-full bg-primary text-lg font-semibold text-primary-foreground md:text-base mb-4"
+                  >
+                    {isLoadingHeaderSettings ? (
+                      <Skeleton className="h-5 w-5 rounded-full bg-background/30" />
+                    ) : headerAppLogoUrl ? (
+                      <Image src={headerAppLogoUrl} alt="App Logo" width={20} height={20} className="h-5 w-5 object-contain" unoptimized/>
+                    ) : (
+                      <CreditCard className="h-5 w-5 transition-all group-hover:scale-110" />
+                    )}
+                    <span className="text-base"> {/* Asegúrate que el nombre sea visible */}
+                      {isLoadingHeaderSettings ? <Skeleton className="h-4 w-20 bg-background/30" /> : headerAppName}
+                    </span>
+                  </Link>
+                </SheetClose>
               {navItems.map((item) => {
                   const isActive = pathname.startsWith(item.href) && (item.href !== '/' || pathname === '/');
                 return (
@@ -113,9 +157,6 @@ export function AppHeader() {
           <DropdownMenuContent align="end">
             <DropdownMenuLabel>{user.email || 'Mi Cuenta'}</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            {/* <DropdownMenuItem>Configuración</DropdownMenuItem>
-            <DropdownMenuItem>Soporte</DropdownMenuItem>
-            <DropdownMenuSeparator /> */}
             <DropdownMenuItem onClick={logout}>
               <LogOut className="mr-2 h-4 w-4" />
               Cerrar Sesión

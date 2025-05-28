@@ -3,22 +3,62 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Users, LogOut, CreditCard, BarChart3, SettingsIcon } from 'lucide-react'; // Added SettingsIcon
+import Image from 'next/image';
+import { LayoutDashboard, Users, LogOut, CreditCard, BarChart3, SettingsIcon, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/contexts/AuthContext';
+import { useEffect, useState } from 'react';
+import { fetchGeneralSettingsAction } from '@/app/actions/settingsActions';
+import type { AppGeneralSettings } from '@/types';
+import { Skeleton } from '@/components/ui/skeleton';
+
 
 const navItems = [
   { href: '/dashboard', label: 'Panel de Analíticas', icon: BarChart3 },
   { href: '/clients', label: 'Clientes', icon: Users },
   { href: '/clients/new', label: 'Agregar Cliente', icon: Users },
-  { href: '/settings', label: 'Configuración', icon: SettingsIcon }, // New settings link
+  { href: '/settings', label: 'Configuración', icon: SettingsIcon },
 ];
 
 export function AppSidebar() {
   const pathname = usePathname();
-  const { user, isAdmin, logout, loading, initialLoadComplete } = useAuth();
+  const { user, isAdmin, logout, initialLoadComplete } = useAuth();
+  const [appName, setAppName] = useState('RecurPay'); // Default
+  const [appLogoUrl, setAppLogoUrl] = useState<string | null>(null);
+  const [isLoadingSettings, setIsLoadingSettings] = useState(true);
+
+  useEffect(() => {
+    async function loadGeneralSettings() {
+      if (isAdmin && user) { // Ensure user is admin before fetching
+        setIsLoadingSettings(true);
+        try {
+          const settings: AppGeneralSettings = await fetchGeneralSettingsAction();
+          if (settings) {
+            setAppName(settings.appName || 'RecurPay');
+            setAppLogoUrl(settings.appLogoUrl || null);
+          }
+        } catch (error) {
+          console.error("Error fetching general settings for sidebar:", error);
+          // Keep default RecurPay name and no logo on error
+          setAppName('RecurPay');
+          setAppLogoUrl(null);
+        } finally {
+          setIsLoadingSettings(false);
+        }
+      } else {
+         // Not admin or no user, or auth not complete yet
+        setAppName('RecurPay'); // Set defaults if not admin/user
+        setAppLogoUrl(null);
+        setIsLoadingSettings(false); 
+      }
+    }
+    if (initialLoadComplete) { // Only fetch after auth state is known
+      loadGeneralSettings();
+    }
+  }, [isAdmin, user, initialLoadComplete]);
+
 
   if (!initialLoadComplete || !isAdmin || !user) {
     return null; 
@@ -28,8 +68,14 @@ export function AppSidebar() {
     <aside className="hidden lg:flex lg:flex-col lg:w-64 border-r bg-sidebar text-sidebar-foreground fixed inset-y-0 left-0 z-10">
       <div className="flex h-16 items-center px-6 border-b border-sidebar-border">
         <Link href="/dashboard" className="flex items-center gap-2 font-semibold text-lg text-sidebar-primary">
-          <CreditCard className="h-6 w-6 text-primary" />
-          <span>RecurPay</span>
+          {isLoadingSettings ? (
+            <Skeleton className="h-6 w-6 rounded-sm bg-sidebar-accent/50" />
+          ) : appLogoUrl ? (
+            <Image src={appLogoUrl} alt="Logo de la Aplicación" width={24} height={24} className="h-6 w-6 object-contain" unoptimized />
+          ) : (
+            <CreditCard className="h-6 w-6 text-primary" />
+          )}
+          <span>{isLoadingSettings ? <Skeleton className="h-5 w-24 bg-sidebar-accent/50" /> : appName}</span>
         </Link>
       </div>
       <nav className="flex-1 overflow-y-auto p-4 space-y-1">
