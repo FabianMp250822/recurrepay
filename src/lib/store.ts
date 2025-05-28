@@ -1,15 +1,15 @@
 
 import type { Client } from '@/types';
 import { db } from '@/lib/firebase';
-import { 
-  collection, 
-  getDocs, 
-  doc, 
-  getDoc, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  query, 
+import {
+  collection,
+  getDocs,
+  doc,
+  getDoc,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  query,
   where,
   orderBy
 } from 'firebase/firestore';
@@ -21,14 +21,19 @@ export async function getClients(): Promise<Client[]> {
     const clientsCollectionRef = collection(db, CLIENTS_COLLECTION);
     const q = query(clientsCollectionRef, orderBy('createdAt', 'desc'));
     const querySnapshot = await getDocs(q);
-    const clientsList: Client[] = querySnapshot.docs.map(docSnap => ({ 
+    const clientsList: Client[] = querySnapshot.docs.map(docSnap => ({
       id: docSnap.id,
       ...(docSnap.data() as Omit<Client, 'id'>)
     }));
     return clientsList;
   } catch (error: any) {
-    console.error("Error fetching clients from Firestore:", error);
-    return []; 
+    console.error("Error fetching clients from Firestore (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    if (error.code === 'permission-denied') {
+      // This will make the error more specific when it propagates to the Server Component
+      throw new Error("Firestore permission denied when fetching clients. Ensure Firebase security rules allow read access to the 'listapagospendiendes' collection for authenticated admins, and that admin status (e.g., 'activo: true' in 'administradores' collection) is correctly set and accessible by the rules.");
+    }
+    // For other types of errors, rethrow a generic or more specific error
+    throw new Error(`Failed to fetch clients due to Firestore error: ${error.message || 'Unknown Firestore error'}. Code: ${error.code || 'N/A'}`);
   }
 }
 
@@ -41,14 +46,20 @@ export async function getClientById(id: string): Promise<Client | undefined> {
     }
     return undefined;
   } catch (error: any) {
-    console.error("Error fetching client by ID from Firestore:", error);
-    return undefined;
+    console.error("Error fetching client by ID from Firestore (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+     if (error.code === 'permission-denied') {
+      throw new Error(`Firestore permission denied when fetching client by ID '${id}'. Check security rules and admin status.`);
+    }
+    throw new Error(`Failed to fetch client by ID '${id}': ${error.message || 'Unknown Firestore error'}`);
   }
 }
 
 export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ client?: Client, error?: string }> {
   try {
     const q = query(collection(db, CLIENTS_COLLECTION), where('email', '==', clientData.email));
+    // The getDocs call below also requires read permission. If getClients is failing due to read permissions,
+    // this query might also fail silently or contribute to permission issues if rules are very granular.
+    // For now, focusing on the explicit error from getClients.
     const emailQuerySnapshot = await getDocs(q);
     if (!emailQuerySnapshot.empty) {
       return { error: "La dirección de correo electrónico ya existe para otro cliente." };
@@ -104,10 +115,10 @@ export async function updateClient(id: string, clientData: Omit<Client, 'id' | '
         }
       }
     }
-    
+
     const dataToUpdate = {
         ...clientData,
-        createdAt: originalClientData.createdAt 
+        createdAt: originalClientData.createdAt
     };
 
     await updateDoc(clientDocRef, dataToUpdate);
@@ -157,3 +168,4 @@ export async function deleteClient(id: string): Promise<{ success?: boolean, err
   }
 }
 
+    
