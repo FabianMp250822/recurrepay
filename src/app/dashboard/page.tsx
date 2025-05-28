@@ -1,6 +1,9 @@
 
+'use client'; // Make this a Client Component
+
 import Link from 'next/link';
-import { PlusCircle, Edit3, UsersIcon as Users, FileText, DollarSign, LinkIcon } from 'lucide-react';
+import { PlusCircle, Edit3, UsersIcon as Users, FileText, DollarSign, LinkIcon, Loader2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react'; // Import useState and useEffect
 import { Button } from '@/components/ui/button';
 import {
   Table,
@@ -20,7 +23,7 @@ import {
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import AppLayout from '@/components/layout/app-layout';
-import { getClients } from '@/lib/store';
+import { getClients } from '@/lib/store'; // getClients will now be called client-side
 import { formatDate, formatCurrency, getDaysUntilDue } from '@/lib/utils';
 import DeleteClientDialog from '@/components/clients/delete-client-dialog';
 import SendReminderButton from '@/components/clients/SendReminderButton';
@@ -32,10 +35,30 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { FINANCING_OPTIONS } from '@/lib/constants';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Terminal } from 'lucide-react';
 
+export default function DashboardPage() {
+  const [clients, setClients] = useState<Client[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-export default async function DashboardPage() {
-  const clients = await getClients();
+  useEffect(() => {
+    async function fetchClients() {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const fetchedClients = await getClients();
+        setClients(fetchedClients);
+      } catch (err: any) {
+        console.error("Error fetching clients on dashboard:", err);
+        setError(err.message || 'Error al cargar los clientes. Por favor, inténtelo de nuevo.');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    fetchClients();
+  }, []);
 
   function getPaymentStatusBadge(nextPaymentDate: string): React.ReactElement {
     const daysUntil = getDaysUntilDue(nextPaymentDate);
@@ -51,6 +74,31 @@ export default async function DashboardPage() {
     return <Badge variant="outline">Programado</Badge>;
   }
 
+  if (isLoading) {
+    return (
+      <AppLayout>
+        <div className="flex items-center justify-center py-10">
+          <Loader2 className="h-12 w-12 animate-spin text-primary" />
+          <p className="ml-4 text-muted-foreground">Cargando clientes...</p>
+        </div>
+      </AppLayout>
+    );
+  }
+
+  if (error) {
+    return (
+      <AppLayout>
+        <Alert variant="destructive" className="my-4">
+          <Terminal className="h-4 w-4" />
+          <AlertTitle>Error al Cargar Clientes</AlertTitle>
+          <AlertDescription>
+            {error}
+            <p className="mt-2 text-xs">Asegúrese de que las reglas de seguridad de Firestore permitan el acceso de lectura a la colección 'listapagospendiendes' para administradores autenticados y activos.</p>
+          </AlertDescription>
+        </Alert>
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout>
@@ -172,7 +220,7 @@ export default async function DashboardPage() {
   );
 }
 
-function UsersIcon(props: React.SVGProps<SVGSVGElement>) {
+function UsersIcon(props: React.SVGProps<SVGSVGElement>) { // This was not an import from lucide-react
   return (
     <svg
       {...props}
@@ -191,6 +239,5 @@ function UsersIcon(props: React.SVGProps<SVGSVGElement>) {
       <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
       <path d="M16 3.13a4 4 0 0 1 0 7.75" />
     </svg>
-  )
+  );
 }
-
