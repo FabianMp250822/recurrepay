@@ -1,6 +1,5 @@
 
 import { z } from 'zod';
-import { FINANCING_OPTIONS } from './constants'; // Will be phased out or re-purposed
 
 // const planKeys = Object.keys(FINANCING_OPTIONS).map(Number); // Will be dynamic
 
@@ -33,10 +32,10 @@ export const clientSchema = z.object({
   ),
 
   // File URLs and names (will be validated if present, but file objects are handled client-side)
-  acceptanceLetterUrl: z.string().url().optional(),
-  acceptanceLetterFileName: z.string().optional(),
-  contractFileUrl: z.string().url().optional(),
-  contractFileName: z.string().optional(),
+  acceptanceLetterUrl: z.string().url().optional().or(z.literal('')),
+  acceptanceLetterFileName: z.string().optional().or(z.literal('')),
+  contractFileUrl: z.string().url().optional().or(z.literal('')),
+  contractFileName: z.string().optional().or(z.literal('')),
 
 }).refine(data => {
   if (data.financingPlan && data.financingPlan !== 0) {
@@ -48,12 +47,17 @@ export const clientSchema = z.object({
   path: ["contractValue"],
 }).refine(data => {
     if (data.contractValue !== undefined && data.contractValue > 0 && data.financingPlan === 0) {
-        return data.paymentAmount !== undefined && data.paymentAmount > 0;
+        // If there's a contract value but no financing (implying a one-time payment structure handled by contract terms,
+        // or potentially a recurring payment for services linked to a contract not financed via RecurPay's plans),
+        // paymentAmount should be explicitly set or could be zero if fully paid by down payment.
+        // For now, we keep it flexible, the server action logic will determine status based on paymentAmount = 0 and contract paid.
+        return true; 
     }
-    // If financing is chosen, paymentAmount is calculated, so not required from user
-    if (data.financingPlan && data.financingPlan !== 0) return true;
-    // If no contract value and no financing plan, then it's a simple recurring service
-    if ((data.contractValue === undefined || data.contractValue === 0) && data.financingPlan === 0) {
+    // If financing is chosen, paymentAmount is calculated, so not required from user for validation here.
+    if (data.financingPlan && data.financingPlan !== 0 && data.contractValue && data.contractValue > 0) return true;
+    
+    // If no contract value and no financing plan, then it's a simple recurring service, paymentAmount is mandatory.
+    if ((data.contractValue === undefined || data.contractValue === 0) && (data.financingPlan === undefined || data.financingPlan === 0)) {
         return data.paymentAmount !== undefined && data.paymentAmount > 0;
     }
     return true;
@@ -78,4 +82,11 @@ export const financingPlanSettingSchema = z.object({
 // Schema for the form that edits multiple financing plan settings
 export const financingSettingsSchema = z.object({
   plans: z.array(financingPlanSettingSchema),
+});
+
+// Schema for general app settings
+export const generalSettingsSchema = z.object({
+  appName: z.string().min(1, "El nombre de la aplicación es obligatorio.").max(50, "El nombre no puede exceder 50 caracteres.").optional().or(z.literal('')),
+  appLogoUrl: z.string().url("Debe ser una URL válida.").optional().or(z.literal('')), // URL will be set after upload
+  notificationsEnabled: z.boolean().optional(),
 });

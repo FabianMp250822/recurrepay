@@ -89,3 +89,16 @@ export interface FinancingPlanSetting {
 export interface AppFinancingSettings {
   plans: FinancingPlanSetting[];
 }
+
+export interface AppGeneralSettings {
+  appName?: string;
+  appLogoUrl?: string;
+  notificationsEnabled?: boolean;
+}
+
+export type AppGeneralSettingsFormData = {
+  appName?: string;
+  appLogoFile?: File | null; // For form handling
+  appLogoUrl?: string; // For storing/retrieving existing URL
+  notificationsEnabled?: boolean;
+};
