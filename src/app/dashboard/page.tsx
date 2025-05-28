@@ -1,6 +1,6 @@
 
 import Link from 'next/link';
-import { PlusCircle, Edit3, UsersIcon as Users } from 'lucide-react';
+import { PlusCircle, Edit3, UsersIcon as Users, FileText, DollarSign } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Table,
@@ -30,7 +30,8 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip"
+} from "@/components/ui/tooltip";
+import { FINANCING_OPTIONS } from '@/lib/constants';
 
 
 export default async function DashboardPage() {
@@ -56,7 +57,7 @@ export default async function DashboardPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-semibold">Gestión de Clientes</h1>
-          <p className="text-muted-foreground">Ver, administrar y agregar nuevos clientes.</p>
+          <p className="text-muted-foreground">Ver, administrar y agregar nuevos clientes y sus planes de pago.</p>
         </div>
         <Button asChild>
           <Link href="/clients/new">
@@ -68,7 +69,7 @@ export default async function DashboardPage() {
         <CardHeader>
           <CardTitle>Lista de Clientes</CardTitle>
           <CardDescription>
-            Una lista de todos los clientes registrados y su información de pago.
+            Una lista de todos los clientes registrados, su información de pago y detalles de financiación.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -90,9 +91,9 @@ export default async function DashboardPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Nombre Completo</TableHead>
-                <TableHead>Correo Electrónico</TableHead>
-                <TableHead className="hidden md:table-cell">Teléfono</TableHead>
-                <TableHead className="text-right">Monto</TableHead>
+                <TableHead className="hidden md:table-cell">Correo Electrónico</TableHead>
+                <TableHead className="text-right">Cuota Mensual</TableHead>
+                <TableHead className="hidden sm:table-cell">Plan Financiación</TableHead>
                 <TableHead className="hidden sm:table-cell">Próximo Pago</TableHead>
                 <TableHead className="hidden sm:table-cell text-center">Estado</TableHead>
                 <TableHead className="text-right">Acciones</TableHead>
@@ -103,13 +104,20 @@ export default async function DashboardPage() {
                 <TableRow key={client.id}>
                   <TableCell>
                     <div className="font-medium">{client.firstName} {client.lastName}</div>
+                    <div className="text-xs text-muted-foreground md:hidden">{client.email}</div>
                   </TableCell>
-                  <TableCell>{client.email}</TableCell>
-                  <TableCell className="hidden md:table-cell">{client.phoneNumber}</TableCell>
-                  <TableCell className="text-right">{formatCurrency(client.paymentAmount)}</TableCell>
+                  <TableCell className="hidden md:table-cell">{client.email}</TableCell>
+                  <TableCell className="text-right">
+                    {client.paymentAmount > 0 ? formatCurrency(client.paymentAmount) : <span className="text-muted-foreground">-</span>}
+                  </TableCell>
+                  <TableCell className="hidden sm:table-cell">
+                    {client.financingPlan && client.financingPlan !== 0 && FINANCING_OPTIONS[client.financingPlan]
+                      ? FINANCING_OPTIONS[client.financingPlan].label
+                      : client.contractValue && client.contractValue > 0 ? <span className="text-muted-foreground">Pago único</span> : <span className="text-muted-foreground">N/A</span>}
+                  </TableCell>
                   <TableCell className="hidden sm:table-cell">{formatDate(client.nextPaymentDate)}</TableCell>
                   <TableCell className="hidden sm:table-cell text-center">
-                    {getPaymentStatusBadge(client.nextPaymentDate)}
+                    {client.paymentAmount > 0 ? getPaymentStatusBadge(client.nextPaymentDate) : <Badge variant="outline">Completado</Badge>}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex gap-2 justify-end">
@@ -128,7 +136,7 @@ export default async function DashboardPage() {
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
-                      <SendReminderButton client={client} />
+                      {client.paymentAmount > 0 && <SendReminderButton client={client} />}
                       <DeleteClientDialog clientId={client.id} clientName={`${client.firstName} ${client.lastName}`} />
                     </div>
                   </TableCell>
