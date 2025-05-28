@@ -6,6 +6,40 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import type { AppFinancingSettings } from '@/types';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Terminal } from 'lucide-react';
+import { Button } from '@/components/ui/button'; // Importar Button
+import { testMercadoPagoPreferenceCreation } from '@/app/actions/mercadopagoTestActions'; // Importar la acción de prueba
+import { useToast } from '@/hooks/use-toast'; // Para mostrar notificaciones
+
+// Componente wrapper para usar hooks de cliente como useToast
+function TestMercadoPagoButton() {
+  'use client'; // Marcar este componente como de cliente
+  const { toast } = useToast();
+
+  const handleTestMercadoPago = async () => {
+    toast({ title: "Iniciando prueba de Mercado Pago...", description: "Revisa la consola del servidor para el resultado." });
+    const result = await testMercadoPagoPreferenceCreation();
+    if (result.success) {
+      toast({
+        title: "Prueba de Mercado Pago Exitosa",
+        description: `Preferencia creada: ${result.preferenceId}. Init Point: ${result.init_point}`,
+        duration: 9000,
+      });
+    } else {
+      toast({
+        title: "Error en Prueba de Mercado Pago",
+        description: result.error || "Ocurrió un error desconocido.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  return (
+    <Button onClick={handleTestMercadoPago} variant="outline" className="mt-4">
+      Probar Conexión Mercado Pago (Crear Preferencia)
+    </Button>
+  );
+}
+
 
 export default async function SettingsPage() {
   let financingSettings: AppFinancingSettings | null = null;
@@ -43,7 +77,19 @@ export default async function SettingsPage() {
         )}
         
         {/* Aquí se pueden añadir más tarjetas de configuración en el futuro */}
-        {/* Por ejemplo: Datos de la Empresa, Plantillas de Correo, etc. */}
+        
+        <Card>
+          <CardHeader>
+            <CardTitle>Pruebas de Integración</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <TestMercadoPagoButton />
+            <p className="text-xs text-muted-foreground mt-2">
+              Este botón intentará crear una preferencia de pago de prueba usando tus credenciales de prueba de Mercado Pago.
+              El resultado se mostrará en la consola de tu servidor Next.js y como una notificación.
+            </p>
+          </CardContent>
+        </Card>
 
       </div>
     </AppLayout>
