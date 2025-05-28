@@ -2,8 +2,8 @@
 'use client'; // Make this a Client Component
 
 import Link from 'next/link';
-import { PlusCircle, Edit3, UsersIcon as Users, FileText, DollarSign, LinkIcon, Loader2 } from 'lucide-react';
-import React, { useState, useEffect } from 'react'; // Import useState and useEffect
+import { PlusCircle, Edit3, Users as UsersIconLucide, FileText, DollarSign, LinkIcon, Loader2, Terminal } from 'lucide-react'; // Renamed UsersIcon to UsersIconLucide
+import React, { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Table,
@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import AppLayout from '@/components/layout/app-layout';
-import { getClients } from '@/lib/store'; // getClients will now be called client-side
+import { getClients } from '@/lib/store';
 import { formatDate, formatCurrency, getDaysUntilDue } from '@/lib/utils';
 import DeleteClientDialog from '@/components/clients/delete-client-dialog';
 import SendReminderButton from '@/components/clients/SendReminderButton';
@@ -36,29 +36,49 @@ import {
 } from "@/components/ui/tooltip";
 import { FINANCING_OPTIONS } from '@/lib/constants';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Terminal } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext'; // Import useAuth
 
 export default function DashboardPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { user, isAdmin, initialLoadComplete } = useAuth(); // Get auth state
+
+  const fetchClientsCallback = useCallback(async () => {
+    if (!isAdmin) {
+        setError("Acceso denegado. No tiene permisos para ver esta información.");
+        setIsLoading(false);
+        return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const fetchedClients = await getClients();
+      setClients(fetchedClients);
+    } catch (err: any) {
+      console.error("Error fetching clients on dashboard. AuthContext state: ", { userUid: user?.uid, isAdminContext: isAdmin, initialLoadCompleteContext: initialLoadComplete }, err);
+      setError(err.message || 'Error al cargar los clientes. Por favor, inténtelo de nuevo.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [isAdmin, user?.uid, initialLoadComplete]); // Dependencies for useCallback
 
   useEffect(() => {
-    async function fetchClients() {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const fetchedClients = await getClients();
-        setClients(fetchedClients);
-      } catch (err: any) {
-        console.error("Error fetching clients on dashboard:", err);
-        setError(err.message || 'Error al cargar los clientes. Por favor, inténtelo de nuevo.');
-      } finally {
+    if (initialLoadComplete) {
+      if (isAdmin) {
+        fetchClientsCallback();
+      } else {
+        // This case should ideally be handled by AppLayout redirecting,
+        // but as a safeguard:
+        setError("Acceso denegado. No es un administrador autorizado.");
         setIsLoading(false);
+        setClients([]); // Clear any stale client data
       }
+    } else {
+      // Still waiting for auth context to initialize
+      setIsLoading(true);
     }
-    fetchClients();
-  }, []);
+  }, [initialLoadComplete, isAdmin, fetchClientsCallback]); // useEffect dependencies
 
   function getPaymentStatusBadge(nextPaymentDate: string): React.ReactElement {
     const daysUntil = getDaysUntilDue(nextPaymentDate);
@@ -74,7 +94,7 @@ export default function DashboardPage() {
     return <Badge variant="outline">Programado</Badge>;
   }
 
-  if (isLoading) {
+  if (isLoading && initialLoadComplete) { // Show specific loader if auth is complete but data is loading
     return (
       <AppLayout>
         <div className="flex items-center justify-center py-10">
@@ -84,8 +104,11 @@ export default function DashboardPage() {
       </AppLayout>
     );
   }
+  
+  // If initialLoadComplete is false, AppLayout will show its own loader or redirect.
+  // This component's content should only attempt to render meaningful UI once auth is resolved.
 
-  if (error) {
+  if (error && initialLoadComplete) { // Show error if auth is complete and an error occurred
     return (
       <AppLayout>
         <Alert variant="destructive" className="my-4">
@@ -93,12 +116,31 @@ export default function DashboardPage() {
           <AlertTitle>Error al Cargar Clientes</AlertTitle>
           <AlertDescription>
             {error}
-            <p className="mt-2 text-xs">Asegúrese de que las reglas de seguridad de Firestore permitan el acceso de lectura a la colección 'listapagospendiendes' para administradores autenticados y activos.</p>
+            {error.toLowerCase().includes("permission denied") || error.toLowerCase().includes("permiso denegado") ? (
+                 <p className="mt-2 text-xs">Asegúrese de que las reglas de seguridad de Firestore permitan el acceso de lectura a la colección 'listapagospendiendes' para administradores autenticados y activos, y que su cuenta de administrador esté configurada correctamente con el estado 'activo: true'.</p>
+            ) : null}
           </AlertDescription>
         </Alert>
       </AppLayout>
     );
   }
+  
+  // Only render the main dashboard content if auth is complete, user is admin, and not loading & no error
+  if (!initialLoadComplete || !isAdmin) {
+    // This state should ideally be caught by AppLayout or the error/loading states above.
+    // If somehow reached, show a generic loading or wait for redirect.
+    // AppLayout handles redirects and global loading, so this might be redundant
+    // or could show a more specific "Checking permissions..." message if AppLayout hasn't redirected yet.
+    return (
+         <AppLayout>
+            <div className="flex items-center justify-center py-10">
+                <Loader2 className="h-12 w-12 animate-spin text-primary" />
+                <p className="ml-4 text-muted-foreground">Verificando acceso...</p>
+            </div>
+        </AppLayout>
+    );
+  }
+
 
   return (
     <AppLayout>
@@ -121,9 +163,9 @@ export default function DashboardPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {clients.length === 0 ? (
+          {clients.length === 0 && !isLoading ? ( // Ensure not loading when showing "no clients"
             <div className="text-center py-10">
-              <Users className="mx-auto h-12 w-12 text-muted-foreground" />
+              <UsersIconLucide className="mx-auto h-12 w-12 text-muted-foreground" />
               <h3 className="mt-2 text-sm font-medium text-foreground">No se encontraron clientes</h3>
               <p className="mt-1 text-sm text-muted-foreground">Comience agregando un nuevo cliente.</p>
               <div className="mt-6">
@@ -220,24 +262,16 @@ export default function DashboardPage() {
   );
 }
 
-function UsersIcon(props: React.SVGProps<SVGSVGElement>) { // This was not an import from lucide-react
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-    </svg>
-  );
-}
+// Removed the local UsersIcon component as lucide-react Users (UsersIconLucide) is imported.
+// If you were using a custom Users icon, ensure UsersIconLucide meets your needs or re-add the custom SVG.
+// For this change, I've assumed you want to use the lucide icon.
+// The import was `import { PlusCircle, Edit3, UsersIcon as Users ...}`
+// I changed `Users` to `UsersIconLucide` in imports and used `UsersIconLucide` in the JSX for clarity.
+// If the original Users was meant to be the custom SVG, that was an oversight in previous steps that it was still there.
+// Given the error, it's unlikely related to the icon, but good to keep imports clean.
+// The error `Error fetching clients from Firestore` points to data fetching.
+
+// Note: The previous custom UsersIcon SVG component was removed.
+// Using `UsersIconLucide` from `lucide-react` for the "No clients found" placeholder.
+// If you had a specific reason for the custom SVG, it would need to be re-added or the import aliased carefully.
+
