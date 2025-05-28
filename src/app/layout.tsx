@@ -15,7 +15,7 @@ export const metadata: Metadata = {
   title: 'RecurPay - Pagos Recurrentes Inteligentes',
   description: 'Gestione sus clientes y automatice los pagos recurrentes con RecurPay.',
   icons: {
-    icon: '/favicon.ico', 
+    icon: '/favicon.ico',
   },
 };
 
@@ -25,7 +25,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es" suppressHydrationWarning> {/* Changed lang to "es" */}
+    <html lang="es" suppressHydrationWarning>
+      {/*
+        Ensure there is NO WHITESPACE OR COMMENTS between the <html> tag above
+        and the <body> tag below.
+        Next.js automatically manages the <head> tag and its contents
+        based on the `metadata` object exported from layouts or pages.
+      */}
       <body className={`${openSans.variable} font-sans antialiased`}>
         <AuthProvider>
           <AppProviders>
@@ -37,4 +43,3 @@ export default function RootLayout({
     </html>
   );
 }
-
