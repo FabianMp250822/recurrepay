@@ -26,8 +26,8 @@ import AppLayout from '@/components/layout/app-layout';
 import { getClients } from '@/lib/store';
 import { formatDate, formatCurrency, getDaysUntilDue } from '@/lib/utils';
 import DeleteClientDialog from '@/components/clients/delete-client-dialog';
-import SendReminderButton from '@/components/clients/SendReminderButton';
-import RegisterPaymentButton from '@/components/clients/RegisterPaymentButton'; // Import new component
+// SendReminderButton ya no es necesario aquí
+import RegisterPaymentButton from '@/components/clients/RegisterPaymentButton'; 
 import type { Client } from '@/types';
 import {
   Tooltip,
@@ -97,8 +97,6 @@ export default function ClientsListPage() {
       return <Badge variant="default" className="bg-green-600 hover:bg-green-700">Completado</Badge>;
     }
     if (client.paymentAmount === 0 && (!client.contractValue || client.contractValue === 0)) {
-         // This case might represent a client with no recurring payment and no contract, or a completed simple service.
-         // Depending on business logic, could be 'Inactivo' or 'Completado'. For now, we stick to 'Completado' if paymentAmount is 0.
         return <Badge variant="default" className="bg-green-600 hover:bg-green-700">Completado</Badge>;
     }
     const daysUntil = getDaysUntilDue(client.nextPaymentDate);
@@ -241,7 +239,7 @@ export default function ClientsListPage() {
             </TableHeader>
             <TableBody>
               {filteredClients.map((client: Client) => {
-                const daysUntilDueForClient = getDaysUntilDue(client.nextPaymentDate);
+                // const daysUntilDueForClient = getDaysUntilDue(client.nextPaymentDate); // Ya no se necesita aquí
                 return (
                 <TableRow key={client.id}>
                   <TableCell>
@@ -294,9 +292,7 @@ export default function ClientsListPage() {
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
-                      {client.paymentAmount > 0 && client.status !== 'completed' && (
-                        <SendReminderButton client={client} daysUntilDue={daysUntilDueForClient} />
-                      )}
+                      {/* SendReminderButton eliminado de aquí */}
                       <DeleteClientDialog clientId={client.id} clientName={`${client.firstName} ${client.lastName}`} />
                     </div>
                   </TableCell>
@@ -317,3 +313,4 @@ export default function ClientsListPage() {
   );
 }
 
+    
