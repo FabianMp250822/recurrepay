@@ -169,19 +169,38 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
   ) => {
     if (!file) return;
 
+    // Validate email before proceeding with upload
+    const isEmailValid = await form.trigger("email");
+    if (!isEmailValid) {
+      toast({
+        title: "Correo Electrónico Requerido",
+        description: "Por favor, ingrese un correo electrónico válido para el cliente antes de subir archivos.",
+        variant: "destructive",
+      });
+      // Reset the file input visually if possible, or at least prevent upload state
+      setState(prev => ({ ...prev, file: null, isUploading: false, error: "Email is required for upload path." }));
+      // Clear the file input so user can re-select if they wish after fixing email
+      const fileInput = document.getElementById(`${fileType}-file-input`) as HTMLInputElement; // Assuming you add ids to your inputs
+      if (fileInput) fileInput.value = "";
+      return;
+    }
+    
+    const clientEmail = form.getValues("email");
+    if (!clientEmail) { // Should be caught by trigger, but as a safeguard
+        toast({ title: "Error", description: "El correo electrónico del cliente no puede estar vacío para subir archivos.", variant: "destructive" });
+        return;
+    }
+
     // Diagnostic log
     console.log(
       'Attempting file upload. Current Firebase Auth User UID:', auth.currentUser?.uid,
-      'Email:', auth.currentUser?.email,
-      'Admin status from AuthContext (if available, else check context directly):', (window as any).authContext?.isAdmin 
+      'Email:', auth.currentUser?.email
     );
 
 
     setState(prev => ({ ...prev, isUploading: true, file, progress: 0, error: null }));
     const uniqueFileName = `${fileType}_${Date.now()}_${file.name}`;
-    // For simplicity, using client email + type for path. Consider client ID if available early.
-    const clientIdentifier = form.getValues("email") || "unknown_client";
-    const storagePath = `client_documents/${clientIdentifier}/${uniqueFileName}`;
+    const storagePath = `client_documents/${clientEmail}/${uniqueFileName}`;
     const storageRef = ref(storage, storagePath);
     const uploadTask = uploadBytesResumable(storageRef, file);
 
@@ -320,6 +339,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
   );
   
 const FileInputField = ({
+    id, // Added id prop
     name,
     label,
     fileState,
@@ -327,6 +347,7 @@ const FileInputField = ({
     existingFileUrl,
     existingFileName,
   }: {
+    id: string; // Added id prop
     name: 'acceptanceLetterFile' | 'contractFileFile';
     label: string;
     fileState: FileUploadState;
@@ -344,6 +365,7 @@ const FileInputField = ({
       <FormControl>
         <div className="flex items-center gap-2">
           <Input
+            id={id} // Use the id prop here
             type="file"
             onChange={(e) => e.target.files?.[0] && onFileChange(e.target.files[0])}
             className="flex-grow"
@@ -364,7 +386,7 @@ const FileInputField = ({
       )}
       {fileState.error && !fileState.isUploading &&(
         <div className="mt-2 text-sm text-destructive flex items-center gap-1">
-          <XCircle size={16} /> Error: {fileState.error}
+          <XCircle size={16} /> Error: {fileState.error === "Email is required for upload path." ? "Se requiere correo para la ruta de subida." : fileState.error}
         </div>
       )}
       <FormMessage />
@@ -459,6 +481,7 @@ const FileInputField = ({
               <CardHeader><CardTitle className="text-xl">Documentos del Cliente</CardTitle></CardHeader>
               <CardContent className="space-y-6">
                 <FileInputField
+                  id="acceptanceLetter-file-input" // Added ID
                   name="acceptanceLetterFile"
                   label="Carta de Aceptación del Contrato"
                   fileState={acceptanceLetterState}
@@ -467,6 +490,7 @@ const FileInputField = ({
                   existingFileName={form.getValues('acceptanceLetterFileName')}
                 />
                 <FileInputField
+                  id="contractFile-file-input" // Added ID
                   name="contractFileFile"
                   label="Contrato Firmado"
                   fileState={contractFileState}
@@ -492,5 +516,3 @@ const FileInputField = ({
     </Card>
   );
 }
-
-
