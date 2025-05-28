@@ -5,16 +5,17 @@ import './globals.css';
 import { Toaster } from '@/components/ui/toaster';
 import AppProviders from '@/components/layout/app-providers';
 import { AuthProvider } from '@/contexts/AuthContext';
-import ThemeApplicator from '@/components/layout/ThemeApplicator'; // Import the new component
+import ThemeApplicator from '@/components/layout/ThemeApplicator';
 
 const openSans = Open_Sans({
   subsets: ['latin'],
   variable: '--font-sans',
 });
 
+// Default metadata. The title will be updated by ThemeApplicator on the client-side.
 export const metadata: Metadata = {
-  title: 'RecurPay - Pagos Recurrentes Inteligentes',
-  description: 'Gestione sus clientes y automatice los pagos recurrentes con RecurPay.',
+  title: 'RecurPay - Pagos Recurrentes Inteligentes', // Default title
+  description: 'Gestione sus clientes y automatice los pagos recurrentes.',
   icons: {
     icon: '/favicon.ico',
   },
@@ -30,7 +31,7 @@ export default function RootLayout({
       <body className={`${openSans.variable} font-sans antialiased`}>
         <AuthProvider>
           <AppProviders>
-            <ThemeApplicator /> {/* Add ThemeApplicator here */}
+            <ThemeApplicator />
             {children}
             <Toaster />
           </AppProviders>

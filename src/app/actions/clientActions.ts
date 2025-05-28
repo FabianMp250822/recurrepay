@@ -8,14 +8,18 @@ import { clientSchema } from '@/lib/schema';
 import * as store from '@/lib/store';
 import type { Client, ClientFormData, PaymentRecord } from '@/types';
 import { formatCurrency, formatDate, calculateNextPaymentDate as calculateNextRegPaymentDateUtil, getDaysUntilDue } from '@/lib/utils';
-import { IVA_RATE, FINANCING_OPTIONS } from '@/lib/constants';
+import { IVA_RATE } from '@/lib/constants'; // Removed FINANCING_OPTIONS, will get from store
 import { addMonths, setDate, getDate, getDaysInMonth } from 'date-fns';
+import { getGeneralSettings } from '@/lib/store'; // To get appName
 
 // Helper function to calculate financing details
-function calculateFinancingDetails(formData: ClientFormData): Partial<Client> {
+async function calculateFinancingDetails(formData: ClientFormData): Promise<Partial<Client>> {
   const contractValue = formData.contractValue || 0;
   const downPaymentPercentage = formData.downPaymentPercentage || 0;
   const financingPlanKey = formData.financingPlan || 0;
+
+  const financingOptionsFromDb = await store.getFinancingOptionsMap();
+
 
   const details: Partial<Client> = {
     contractValue,
@@ -48,7 +52,7 @@ function calculateFinancingDetails(formData: ClientFormData): Partial<Client> {
     details.amountToFinance = Math.max(0, details.totalWithIva - details.downPayment);
 
     if (financingPlanKey !== 0 && details.amountToFinance > 0) {
-      const planInfo = FINANCING_OPTIONS[financingPlanKey];
+      const planInfo = financingOptionsFromDb[financingPlanKey];
       if (planInfo) {
         details.financingInterestRateApplied = planInfo.rate;
         details.financingInterestAmount = details.amountToFinance * planInfo.rate;
@@ -85,7 +89,7 @@ export async function createClientAction(formData: ClientFormData) {
   }
 
   const validatedData = validationResult.data;
-  const financingDetails = calculateFinancingDetails(validatedData);
+  const financingDetails = await calculateFinancingDetails(validatedData);
 
   const clientToCreate = {
     ...validatedData, 
@@ -93,10 +97,10 @@ export async function createClientAction(formData: ClientFormData) {
     paymentAmount: financingDetails.paymentAmount!, 
     nextPaymentDate: calculateNextRegPaymentDateUtil(validatedData.paymentDayOfMonth).toISOString(),
     createdAt: new Date().toISOString(),
-    paymentsMadeCount: 0, // Explicitly set for new clients
+    paymentsMadeCount: 0, 
     status: financingDetails.status || 'active',
   };
-  // Remove undefined values that Zod might have set from optional fields if they were empty
+  
   Object.keys(clientToCreate).forEach(key => clientToCreate[key as keyof typeof clientToCreate] === undefined && delete clientToCreate[key as keyof typeof clientToCreate]);
 
 
@@ -117,20 +121,18 @@ export async function updateClientAction(id: string, formData: ClientFormData) {
   }
   
   const validatedData = validationResult.data;
-  // Fetch existing client to preserve fields like paymentsMadeCount if not part of form
   const existingClient = await store.getClientById(id);
   if (!existingClient) {
     return { success: false, generalError: "Cliente no encontrado." };
   }
 
-  const financingDetails = calculateFinancingDetails(validatedData);
+  const financingDetails = await calculateFinancingDetails(validatedData);
 
   const clientToUpdate = {
     ...validatedData,
     ...financingDetails,
     paymentAmount: financingDetails.paymentAmount!,
     nextPaymentDate: calculateNextRegPaymentDateUtil(validatedData.paymentDayOfMonth).toISOString(),
-    // Preserve existing tracking fields if not directly modified by this form's logic
     paymentsMadeCount: existingClient.paymentsMadeCount, 
     status: financingDetails.status || existingClient.status || 'active',
   };
@@ -197,8 +199,11 @@ export async function registerPaymentAction(clientId: string) {
     nextPaymentDate: newNextPaymentDate.toISOString(),
     paymentsMadeCount: newPaymentsMadeCount,
   };
+  
+  const financingOptionsFromDb = await store.getFinancingOptionsMap();
 
-  if (client.financingPlan && client.financingPlan > 0 && newPaymentsMadeCount >= client.financingPlan) {
+
+  if (client.financingPlan && client.financingPlan > 0 && financingOptionsFromDb[client.financingPlan] && newPaymentsMadeCount >= client.financingPlan) {
     updates.paymentAmount = 0;
     updates.status = 'completed';
   }
@@ -221,10 +226,14 @@ export async function sendPaymentReminderEmailAction(client: Client) {
     EMAIL_SERVER_PORT,
     EMAIL_SERVER_USER,
     EMAIL_SERVER_PASSWORD,
-    EMAIL_FROM,
+    // EMAIL_FROM, // We'll get the appName and use it for the from part
   } = process.env;
 
-  if (!EMAIL_SERVER_HOST || !EMAIL_SERVER_PORT || !EMAIL_SERVER_USER || !EMAIL_SERVER_PASSWORD || !EMAIL_FROM) {
+  const generalSettings = await getGeneralSettings();
+  const appName = generalSettings.appName || 'RecurPay'; // Default to RecurPay if not set
+  const emailFromConfigured = process.env.EMAIL_FROM || `${appName} <noreply@example.com>`; // Fallback noreply
+
+  if (!EMAIL_SERVER_HOST || !EMAIL_SERVER_PORT || !EMAIL_SERVER_USER || !EMAIL_SERVER_PASSWORD || !emailFromConfigured) {
     console.error('Falta configuración de correo en .env. Asegúrate de que EMAIL_SERVER_HOST, EMAIL_SERVER_PORT, EMAIL_SERVER_USER, EMAIL_SERVER_PASSWORD, y EMAIL_FROM estén configurados.');
     return { success: false, error: 'Servidor de correo no configurado. El administrador ha sido notificado.' };
   }
@@ -244,28 +253,30 @@ export async function sendPaymentReminderEmailAction(client: Client) {
   
   const paymentAmountText = client.paymentAmount > 0 ? `su pago de <strong>${formatCurrency(client.paymentAmount)}</strong>` : "su próximo compromiso de pago";
   
-  let subject = "Recordatorio Importante - RecurPay";
+  let subject = `Recordatorio Importante - ${appName}`;
   const daysUntilDue = getDaysUntilDue(client.nextPaymentDate);
+  const financingOptionsFromDb = await store.getFinancingOptionsMap();
+
 
   if (client.paymentAmount > 0) {
     if (daysUntilDue < -5) {
-      subject = `URGENTE: Pago VENCIDO para ${client.firstName} - ${formatCurrency(client.paymentAmount)}`;
+      subject = `URGENTE (${appName}): Pago VENCIDO para ${client.firstName} - ${formatCurrency(client.paymentAmount)}`;
     } else if (daysUntilDue < 0) {
-      subject = `AVISO: Tu pago para ${client.firstName} de ${formatCurrency(client.paymentAmount)} está VENCIDO`;
+      subject = `AVISO (${appName}): Tu pago para ${client.firstName} de ${formatCurrency(client.paymentAmount)} está VENCIDO`;
     } else if (daysUntilDue === 0) {
-      subject = `¡Importante! Tu pago de ${formatCurrency(client.paymentAmount)} para ${client.firstName} vence HOY`;
+      subject = `¡Importante (${appName})! Tu pago de ${formatCurrency(client.paymentAmount)} para ${client.firstName} vence HOY`;
     } else if (daysUntilDue === 1) {
-      subject = `¡Atención! Tu pago de ${formatCurrency(client.paymentAmount)} para ${client.firstName} vence MAÑANA`;
+      subject = `¡Atención (${appName})! Tu pago de ${formatCurrency(client.paymentAmount)} para ${client.firstName} vence MAÑANA`;
     } else if (daysUntilDue <= 7) {
-      subject = `Recordatorio: Tu pago de ${formatCurrency(client.paymentAmount)} para ${client.firstName} vence pronto`;
+      subject = `Recordatorio (${appName}): Tu pago de ${formatCurrency(client.paymentAmount)} para ${client.firstName} vence pronto`;
     } else {
-      subject = `Recordatorio Amistoso: Próximo Pago - RecurPay`;
+      subject = `Recordatorio Amistoso (${appName}): Próximo Pago`;
     }
   }
 
 
   const mailOptions = {
-    from: `"RecurPay" <${EMAIL_FROM}>`,
+    from: emailFromConfigured.includes('<') ? emailFromConfigured : `"${appName}" <${emailFromConfigured}>`,
     to: client.email,
     subject: subject,
     html: `
@@ -279,7 +290,7 @@ export async function sendPaymentReminderEmailAction(client: Client) {
         <ul>
           <li>Valor del Contrato: ${formatCurrency(client.contractValue)}</li>
           ${client.downPaymentPercentage && client.downPayment ? `<li>Abono (${client.downPaymentPercentage}%): ${formatCurrency(client.downPayment)}</li>` : ''}
-          <li>Plan: ${FINANCING_OPTIONS[client.financingPlan]?.label || `${client.financingPlan} meses`}</li>
+          <li>Plan: ${financingOptionsFromDb[client.financingPlan]?.label || `${client.financingPlan} meses`}</li>
           <li>Cuota Mensual: ${formatCurrency(client.paymentAmount)}</li>
         </ul>
         ` : client.paymentAmount > 0 ? `
@@ -294,10 +305,10 @@ export async function sendPaymentReminderEmailAction(client: Client) {
         <p>Si ya ha realizado este pago, por favor ignore este correo. Si tiene alguna pregunta o necesita actualizar su información de pago, no dude en contactarnos.</p>
         <p>¡Gracias por su preferencia!</p>
         <p>Atentamente,</p>
-        <p><strong>El Equipo de RecurPay</strong></p>
+        <p><strong>El Equipo de ${appName}</strong></p>
         <hr style="border: none; border-top: 1px solid #E3F2FD; margin-top: 20px; margin-bottom: 10px;" />
         <p style="font-size: 0.8em; color: #777;">
-          Este es un mensaje automático de RecurPay. Por favor, no responda directamente a este correo electrónico.
+          Este es un mensaje automático de ${appName}. Por favor, no responda directamente a este correo electrónico.
         </p>
       </div>
     `,
@@ -322,5 +333,3 @@ export async function sendPaymentReminderEmailAction(client: Client) {
     return { success: false, error: errorMessage };
   }
 }
-
-    

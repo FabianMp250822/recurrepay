@@ -13,31 +13,32 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import AppLayout from '@/components/layout/app-layout';
-import { getClients } from '@/lib/store';
+import { getClients, getGeneralSettings, getFinancingOptionsMap } from '@/lib/store'; // Added getGeneralSettings & getFinancingOptionsMap
 import { formatDate, formatCurrency, getDaysUntilDue } from '@/lib/utils';
-import type { Client } from '@/types';
+import type { Client, AppGeneralSettings } from '@/types'; // Added AppGeneralSettings
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useAuth } from '@/contexts/AuthContext';
 import { 
   isSameMonth, isSameYear, getMonth, getYear, startOfToday, 
   parseISO, format as formatDateFns, addMonths, subMonths,
-  startOfMonth, endOfMonth 
 } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 import MonthlyRevenueChart from '@/components/analytics/MonthlyRevenueChart';
 import ClientGrowthChart from '@/components/analytics/ClientGrowthChart';
 import FinancingPlanDistributionChart from '@/components/analytics/FinancingPlanDistributionChart';
-import { FINANCING_OPTIONS } from '@/lib/constants';
-
+// import { FINANCING_OPTIONS } from '@/lib/constants'; // Will get from DB
 
 export default function AnalyticsDashboardPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { user, isAdmin, initialLoadComplete } = useAuth();
+  const [appName, setAppName] = useState('RecurPay'); // Default
+  const [financingOptions, setFinancingOptions] = useState<{[key: number]: { rate: number; label: string }}>({});
 
-  const fetchClientsCallback = useCallback(async () => {
+
+  const fetchDashboardData = useCallback(async () => {
     if (!initialLoadComplete || !isAdmin) {
       if (initialLoadComplete && !isAdmin) {
         setError("Acceso denegado. No tiene permisos para ver esta información.");
@@ -48,12 +49,21 @@ export default function AnalyticsDashboardPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const fetchedClients = await getClients();
+      const [fetchedClients, generalSettings, finOptions] = await Promise.all([
+        getClients(),
+        getGeneralSettings(),
+        getFinancingOptionsMap(),
+      ]);
       setClients(fetchedClients);
+      if (generalSettings && generalSettings.appName) {
+        setAppName(generalSettings.appName);
+      }
+      setFinancingOptions(finOptions);
+
     } catch (err: any) {
-      console.error("Error fetching clients on dashboard. AuthContext state: ", { userUid: user?.uid, isAdminContext: isAdmin, initialLoadCompleteContext: initialLoadComplete }, err);
-      const detailedError = err.message || 'Error al cargar los clientes. Por favor, inténtelo de nuevo.';
-      setError(detailedError.includes("permission denied") || detailedError.includes("Permiso denegado") ? "Permiso denegado por Firestore al buscar clientes. Asegúrese de que las reglas de seguridad de Firebase permitan el acceso de lectura a la colección 'listapagospendiendes' para administradores autenticados y activos, y que su cuenta de administrador esté configurada correctamente con el estado 'activo: true'." : detailedError);
+      console.error("Error fetching data for dashboard. AuthContext state: ", { userUid: user?.uid, isAdminContext: isAdmin, initialLoadCompleteContext: initialLoadComplete }, err);
+      const detailedError = err.message || 'Error al cargar los datos del panel. Por favor, inténtelo de nuevo.';
+      setError(detailedError.includes("permission denied") || detailedError.includes("Permiso denegado") ? "Permiso denegado por Firestore al buscar datos. Asegúrese de que las reglas de seguridad de Firebase permitan el acceso de lectura requerido y que su cuenta de administrador esté configurada correctamente." : detailedError);
     } finally {
       setIsLoading(false);
     }
@@ -62,14 +72,14 @@ export default function AnalyticsDashboardPage() {
   useEffect(() => {
     if (initialLoadComplete) {
       if (isAdmin) {
-        fetchClientsCallback();
+        fetchDashboardData();
       } else {
         setError("Acceso denegado. No es un administrador autorizado.");
         setIsLoading(false);
         setClients([]);
       }
     }
-  }, [initialLoadComplete, isAdmin, fetchClientsCallback]);
+  }, [initialLoadComplete, isAdmin, fetchDashboardData]);
 
   const statistics = useMemo(() => {
     if (!clients || clients.length === 0) {
@@ -89,8 +99,8 @@ export default function AnalyticsDashboardPage() {
     }
 
     const today = startOfToday();
-    const currentMonth = getMonth(today);
-    const currentYear = getYear(today);
+    // const currentMonth = getMonth(today); // Not directly used in this calculation logic
+    // const currentYear = getYear(today); // Not directly used in this calculation logic
 
     let totalPendingCollection = 0;
     let estimatedTaxes = 0;
@@ -106,16 +116,14 @@ export default function AnalyticsDashboardPage() {
 
 
     clients.forEach(client => {
-      if (client.paymentAmount > 0) {
-        totalPendingCollection += client.paymentAmount; // Sums up one next payment per client
+      if (client.paymentAmount > 0 && client.status !== 'completed') {
+        totalPendingCollection += client.paymentAmount; 
 
         const nextPaymentDate = parseISO(client.nextPaymentDate);
         if (isSameMonth(nextPaymentDate, today) && isSameYear(nextPaymentDate, today)) {
           currentMonthProjection += client.paymentAmount;
         }
         if (isSameYear(nextPaymentDate, today)) {
-          // This is a simple sum of next payments in the year. For a true annual projection,
-          // one might need to sum up all expected payments for each client within the year.
           currentYearProjection += client.paymentAmount;
         }
 
@@ -141,13 +149,9 @@ export default function AnalyticsDashboardPage() {
         }
         if(client.totalAmountWithInterest && client.financingPlan && client.financingPlan > 0) {
             totalProjectedRevenue += (client.downPayment || 0) + client.totalAmountWithInterest;
-        } else if (client.totalWithIva) {
+        } else if (client.totalWithIva) { // Contract value but no financing (e.g. single payment)
             totalProjectedRevenue += client.totalWithIva;
         }
-      } else if (client.paymentAmount > 0) { // Recurring service without contract value
-        // For simple recurring services, totalProjectedRevenue might be harder to define without an end date.
-        // Here, we can consider each paymentAmount as part of ongoing revenue.
-        // This part may need business logic refinement based on how you define "total projected revenue" for non-contract clients.
       }
     });
 
@@ -171,15 +175,13 @@ export default function AnalyticsDashboardPage() {
     const data: { month: string; revenue: number }[] = [];
     const today = new Date();
     
-    for (let i = 0; i < 6; i++) { // Project for next 6 months
+    for (let i = 0; i < 6; i++) { 
       const targetMonthDate = addMonths(today, i);
       const monthName = formatDateFns(targetMonthDate, 'MMM yyyy', { locale: es });
       let monthlySum = 0;
       clients.forEach(client => {
-        if (client.paymentAmount > 0) {
+        if (client.paymentAmount > 0 && client.status !== 'completed') {
           const nextPaymentDate = parseISO(client.nextPaymentDate);
-          // This simple projection assumes the *next* payment. 
-          // A more complex one would track all payments due in that month.
           if (isSameMonth(nextPaymentDate, targetMonthDate) && isSameYear(nextPaymentDate, targetMonthDate)) {
             monthlySum += client.paymentAmount;
           }
@@ -195,14 +197,16 @@ export default function AnalyticsDashboardPage() {
     const data: { month: string; count: number }[] = [];
     const today = new Date();
     
-    for (let i = 5; i >= 0; i--) { // Last 6 months including current
+    for (let i = 5; i >= 0; i--) { 
       const targetMonthDate = subMonths(today, i);
       const monthName = formatDateFns(targetMonthDate, 'MMM yyyy', { locale: es });
       let clientsInMonth = 0;
       clients.forEach(client => {
-        const createdAtDate = parseISO(client.createdAt);
-        if (isSameMonth(createdAtDate, targetMonthDate) && isSameYear(createdAtDate, targetMonthDate)) {
-          clientsInMonth++;
+        if (client.createdAt){
+            const createdAtDate = parseISO(client.createdAt);
+            if (isSameMonth(createdAtDate, targetMonthDate) && isSameYear(createdAtDate, targetMonthDate)) {
+            clientsInMonth++;
+            }
         }
       });
       data.push({ month: monthName, count: clientsInMonth });
@@ -211,13 +215,13 @@ export default function AnalyticsDashboardPage() {
   }, [clients]);
 
   const financingPlanDistributionData = useMemo(() => {
-    if (!clients) return [];
+    if (!clients || Object.keys(financingOptions).length === 0) return [];
     const distribution: { name: string; value: number; fill: string }[] = [];
     const planCounts: { [key: string]: number } = {};
 
     clients.forEach(client => {
-      const planKey = client.financingPlan !== undefined ? String(client.financingPlan) : "0";
-      const planLabel = FINANCING_OPTIONS[Number(planKey)]?.label || "N/A";
+      const planKey = client.financingPlan !== undefined ? Number(client.financingPlan) : 0;
+      const planLabel = financingOptions[planKey]?.label || "N/A";
       planCounts[planLabel] = (planCounts[planLabel] || 0) + 1;
     });
 
@@ -228,7 +232,7 @@ export default function AnalyticsDashboardPage() {
       colorIndex++;
     }
     return distribution;
-  }, [clients]);
+  }, [clients, financingOptions]);
 
 
   if (!initialLoadComplete) {
@@ -287,7 +291,7 @@ export default function AnalyticsDashboardPage() {
   return (
     <AppLayout>
       <div className="mb-6">
-        <h1 className="text-3xl font-semibold">Panel de Analíticas RecurPay</h1>
+        <h1 className="text-3xl font-semibold">Panel de Analíticas {appName}</h1>
         <p className="text-muted-foreground">Métricas clave, proyecciones y rendimiento de su negocio.</p>
       </div>
 
@@ -301,7 +305,7 @@ export default function AnalyticsDashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{formatCurrency(statistics.totalPendingCollection)}</div>
-            <p className="text-xs text-muted-foreground">Suma de la próxima cuota de cada cliente</p>
+            <p className="text-xs text-muted-foreground">Suma de la próxima cuota de cada cliente activo</p>
           </CardContent>
         </Card>
         <Card>
@@ -414,8 +418,8 @@ export default function AnalyticsDashboardPage() {
             <UsersIconLucide className="h-5 w-5 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{clients.length}</div>
-            <p className="text-xs text-muted-foreground">Número total de clientes registrados</p>
+            <div className="text-2xl font-bold">{clients.filter(c => c.status === 'active').length}</div>
+            <p className="text-xs text-muted-foreground">Número total de clientes activos</p>
           </CardContent>
         </Card>
       </div>
@@ -452,7 +456,7 @@ export default function AnalyticsDashboardPage() {
       <Card className="mb-8">
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><PieChartIcon className="h-5 w-5" />Distribución de Clientes por Plan de Financiación</CardTitle>
-            <CardDescription>Cómo se distribuyen los clientes entre los diferentes planes de financiación.</CardDescription>
+            <CardDescription>Cómo se distribuyen los clientes entre los diferentes planes de financiación ofrecidos.</CardDescription>
           </CardHeader>
           <CardContent className="flex justify-center">
             {financingPlanDistributionData.length > 0 ? (

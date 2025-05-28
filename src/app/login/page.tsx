@@ -11,6 +11,8 @@ import { useRouter } from 'next/navigation';
 import React, { useEffect, useState } from 'react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Terminal } from 'lucide-react';
+import { fetchGeneralSettingsAction } from '@/app/actions/settingsActions';
+import type { AppGeneralSettings } from '@/types';
 
 
 export default function LoginPage() {
@@ -18,6 +20,21 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const { login, loading, authError, setAuthError, user, isAdmin, initialLoadComplete } = useAuth();
   const router = useRouter();
+  const [appName, setAppName] = useState('RecurPay'); // Default
+
+  useEffect(() => {
+    async function loadSettings() {
+      try {
+        const settings: AppGeneralSettings = await fetchGeneralSettingsAction();
+        if (settings && settings.appName) {
+          setAppName(settings.appName);
+        }
+      } catch (error) {
+        console.error("Error fetching app name for login page:", error);
+      }
+    }
+    loadSettings();
+  }, []);
 
   useEffect(() => {
     if (initialLoadComplete && user && isAdmin) {
@@ -36,7 +53,7 @@ export default function LoginPage() {
     await login(email, password);
   };
   
-  if (!initialLoadComplete || (user && isAdmin)) {
+  if (!initialLoadComplete || (user && isAdmin && initialLoadComplete)) { // Check initialLoadComplete here too
      return (
       <div className="flex items-center justify-center min-h-screen bg-background">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -51,7 +68,7 @@ export default function LoginPage() {
           <div className="inline-flex items-center justify-center mb-4">
             <CreditCard className="h-10 w-10 text-primary" />
           </div>
-          <CardTitle className="text-3xl font-bold">RecurPay</CardTitle>
+          <CardTitle className="text-3xl font-bold">{appName}</CardTitle>
           <CardDescription>Inicio de Sesión de Administrador</CardDescription>
         </CardHeader>
         <CardContent>

@@ -19,42 +19,50 @@ export default function ThemeApplicator() {
   useEffect(() => {
     let isMounted = true;
 
-    async function applyThemeSettings() {
-      if (initialLoadComplete && isMounted) { // No need to check for isAdmin or user for theme application
+    async function applyThemeAndSettings() {
+      if (initialLoadComplete && isMounted) {
         try {
           const settings: AppGeneralSettings = await fetchGeneralSettingsAction();
           
+          // Apply theme colors
           if (settings.themePrimary) {
-            document.documentElement.style.setProperty('--primary', settings.themePrimary);
+            setCssVariable('--primary', settings.themePrimary);
           }
           if (settings.themeSecondary) {
-            document.documentElement.style.setProperty('--secondary', settings.themeSecondary);
+            setCssVariable('--secondary', settings.themeSecondary);
           }
           if (settings.themeAccent) {
-            document.documentElement.style.setProperty('--accent', settings.themeAccent);
+            setCssVariable('--accent', settings.themeAccent);
           }
           if (settings.themeBackground) {
-            document.documentElement.style.setProperty('--background', settings.themeBackground);
+            setCssVariable('--background', settings.themeBackground);
           }
           if (settings.themeForeground) {
-            document.documentElement.style.setProperty('--foreground', settings.themeForeground);
+            setCssVariable('--foreground', settings.themeForeground);
           }
-          // Potentially add more for card, popover, border, input, ring if you make them configurable.
-          // Also consider dark theme variables (--dark-primary, etc.) if you want separate dark theme customization.
+
+          // Update document title with appName
+          if (settings.appName && document.title) {
+            // Preserve any dynamic parts of the title (e.g., page specific) if possible,
+            // or set a base title. For simplicity, we'll update the whole title.
+            // Consider a more sophisticated title management strategy if needed.
+            document.title = `${settings.appName} - Pagos Recurrentes Inteligentes`;
+          }
           
         } catch (error) {
-          console.error("Error applying theme settings:", error);
-          // Defaults from globals.css will apply
+          console.error("Error applying theme or app settings:", error);
+          // Defaults from globals.css will apply for theme
+          // Default title from layout.tsx will remain for title
         }
       }
     }
 
-    applyThemeSettings();
+    applyThemeAndSettings();
 
     return () => {
       isMounted = false;
     };
-  }, [initialLoadComplete]); // Re-run if auth state changes, though settings are app-wide
+  }, [initialLoadComplete]);
 
   return null; // This component does not render anything itself
 }
