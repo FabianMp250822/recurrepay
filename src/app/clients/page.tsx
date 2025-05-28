@@ -2,7 +2,7 @@
 'use client'; 
 
 import Link from 'next/link';
-import { PlusCircle, Edit3, Users as UsersIconLucide, FileText, DollarSign, Link as LinkIconLucide, Loader2, Terminal, CreditCard as CreditCardIcon, Mail, CheckCircle } from 'lucide-react';
+import { PlusCircle, Edit3, Users as UsersIconLucide, FileText, DollarSign, Link as LinkIconLucide, Loader2, Terminal, CreditCard as CreditCardIcon, CheckCircle, MessageSquare } from 'lucide-react'; // Added MessageSquare
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import {
@@ -24,9 +24,8 @@ import {
 import { Badge } from '@/components/ui/badge';
 import AppLayout from '@/components/layout/app-layout';
 import { getClients } from '@/lib/store';
-import { formatDate, formatCurrency, getDaysUntilDue } from '@/lib/utils';
+import { formatDate, formatCurrency, getDaysUntilDue, cleanPhoneNumberForWhatsApp } from '@/lib/utils'; // Added cleanPhoneNumberForWhatsApp
 import DeleteClientDialog from '@/components/clients/delete-client-dialog';
-// SendReminderButton ya no es necesario aquí
 import RegisterPaymentButton from '@/components/clients/RegisterPaymentButton'; 
 import type { Client } from '@/types';
 import {
@@ -111,6 +110,31 @@ export default function ClientsListPage() {
     }
     return <Badge variant="outline">Programado</Badge>;
   }
+
+  const generateWhatsAppLink = (client: Client) => {
+    const cleanedPhoneNumber = cleanPhoneNumberForWhatsApp(client.phoneNumber);
+    if (!cleanedPhoneNumber) return "#"; // Fallback si el número no es válido
+
+    const daysUntilDue = getDaysUntilDue(client.nextPaymentDate);
+    let specificMessagePart = "";
+
+    if (daysUntilDue < 0) {
+      specificMessagePart = `su pago de ${formatCurrency(client.paymentAmount)} que está VENCIDO.`;
+    } else if (daysUntilDue === 0) {
+      specificMessagePart = `su pago de ${formatCurrency(client.paymentAmount)} que vence HOY.`;
+    } else if (daysUntilDue === 1) {
+      specificMessagePart = `su pago de ${formatCurrency(client.paymentAmount)} que vence MAÑANA.`;
+    } else if (daysUntilDue > 1 && daysUntilDue <= 5) {
+      specificMessagePart = `su pago de ${formatCurrency(client.paymentAmount)} que vence en ${daysUntilDue} días.`;
+    } else if (daysUntilDue > 5) {
+      specificMessagePart = `su próximo pago de ${formatCurrency(client.paymentAmount)} programado para el ${formatDate(client.nextPaymentDate)}.`;
+    } else {
+      specificMessagePart = `su próximo pago de ${formatCurrency(client.paymentAmount)}.`;
+    }
+    
+    const message = `Hola ${client.firstName}, le recordamos desde RecurPay sobre ${specificMessagePart} Por favor, realice su pago a la brevedad. ¡Gracias!`;
+    return `https://wa.me/${cleanedPhoneNumber}?text=${encodeURIComponent(message)}`;
+  };
   
   if (!initialLoadComplete) {
      return (
@@ -239,7 +263,9 @@ export default function ClientsListPage() {
             </TableHeader>
             <TableBody>
               {filteredClients.map((client: Client) => {
-                // const daysUntilDueForClient = getDaysUntilDue(client.nextPaymentDate); // Ya no se necesita aquí
+                const daysUntilDueClient = getDaysUntilDue(client.nextPaymentDate);
+                const canSendWhatsAppReminder = client.paymentAmount > 0 && client.status !== 'completed' && daysUntilDueClient >= -5 && daysUntilDueClient <= 5;
+
                 return (
                 <TableRow key={client.id}>
                   <TableCell>
@@ -277,6 +303,22 @@ export default function ClientsListPage() {
                   <TableCell className="text-right">
                     <div className="flex gap-1 sm:gap-2 justify-end">
                       {client.paymentAmount > 0 && client.status !== 'completed' && <RegisterPaymentButton client={client} />}
+                       {canSendWhatsAppReminder && (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button variant="outline" size="icon" asChild className="border-green-500 text-green-600 hover:bg-green-50 hover:text-green-700">
+                                <a href={generateWhatsAppLink(client)} target="_blank" rel="noopener noreferrer" aria-label={`Enviar recordatorio por WhatsApp a ${client.firstName} ${client.lastName}`}>
+                                  <MessageSquare className="h-4 w-4" />
+                                </a>
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Enviar Recordatorio por WhatsApp</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -292,7 +334,6 @@ export default function ClientsListPage() {
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
-                      {/* SendReminderButton eliminado de aquí */}
                       <DeleteClientDialog clientId={client.id} clientName={`${client.firstName} ${client.lastName}`} />
                     </div>
                   </TableCell>

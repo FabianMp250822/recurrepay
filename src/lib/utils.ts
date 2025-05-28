@@ -55,3 +55,17 @@ export function getDaysUntilDue(dateString: string): number {
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   return diffDays;
 }
+
+export function cleanPhoneNumberForWhatsApp(phoneNumber: string): string {
+  // Remover caracteres no numéricos excepto el + inicial si existe
+  let cleaned = phoneNumber.replace(/[^\d+]/g, "");
+  // Si empieza con +, quitarlo para wa.me, ya que el código de país se asume o se añade sin el +
+  // wa.me espera el número sin el +, ej: 573001234567
+  if (cleaned.startsWith('+')) {
+    cleaned = cleaned.substring(1);
+  }
+  // Aquí podrías añadir lógica para asegurar que tenga el código de país si no lo tiene.
+  // Por ejemplo, si es un número colombiano y no empieza con 57, añadirlo.
+  // Esta es una simplificación. Para un uso robusto, se necesitaría una validación/formateo más exhaustivo.
+  return cleaned;
+}
