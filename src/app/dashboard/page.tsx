@@ -2,8 +2,8 @@
 'use client'; // Make this a Client Component
 
 import Link from 'next/link';
-import { PlusCircle, Edit3, Users as UsersIconLucide, FileText, DollarSign, LinkIcon, Loader2, Terminal } from 'lucide-react'; // Renamed UsersIcon to UsersIconLucide
-import React, { useState, useEffect, useCallback } from 'react';
+import { PlusCircle, Edit3, Users as UsersIconLucide, FileText, DollarSign, LinkIcon, Loader2, Terminal, Landmark, TrendingUp, CalendarClock, UserX, CreditCard as CreditCardIcon, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Table,
@@ -36,13 +36,14 @@ import {
 } from "@/components/ui/tooltip";
 import { FINANCING_OPTIONS } from '@/lib/constants';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { useAuth } from '@/contexts/AuthContext'; // Import useAuth
+import { useAuth } from '@/contexts/AuthContext';
+import { isSameMonth, isSameYear, getMonth, getYear, startOfToday } from 'date-fns';
 
 export default function DashboardPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { user, isAdmin, initialLoadComplete } = useAuth(); // Get auth state
+  const { user, isAdmin, initialLoadComplete } = useAuth();
 
   const fetchClientsCallback = useCallback(async () => {
     if (!isAdmin) {
@@ -57,28 +58,83 @@ export default function DashboardPage() {
       setClients(fetchedClients);
     } catch (err: any) {
       console.error("Error fetching clients on dashboard. AuthContext state: ", { userUid: user?.uid, isAdminContext: isAdmin, initialLoadCompleteContext: initialLoadComplete }, err);
-      setError(err.message || 'Error al cargar los clientes. Por favor, inténtelo de nuevo.');
+      const detailedError = err.message || 'Error al cargar los clientes. Por favor, inténtelo de nuevo.';
+      setError(detailedError.includes("permission denied") || detailedError.includes("Permiso denegado") ? "Permiso denegado por Firestore al buscar clientes. Asegúrese de que las reglas de seguridad de Firebase permitan el acceso de lectura a la colección 'listapagospendiendes' para administradores autenticados y activos, y que su cuenta de administrador esté configurada correctamente con el estado 'activo: true'." : detailedError);
     } finally {
       setIsLoading(false);
     }
-  }, [isAdmin, user?.uid, initialLoadComplete]); // Dependencies for useCallback
+  }, [isAdmin, user?.uid, initialLoadComplete]);
 
   useEffect(() => {
     if (initialLoadComplete) {
       if (isAdmin) {
         fetchClientsCallback();
       } else {
-        // This case should ideally be handled by AppLayout redirecting,
-        // but as a safeguard:
         setError("Acceso denegado. No es un administrador autorizado.");
         setIsLoading(false);
-        setClients([]); // Clear any stale client data
+        setClients([]);
       }
     } else {
-      // Still waiting for auth context to initialize
       setIsLoading(true);
     }
-  }, [initialLoadComplete, isAdmin, fetchClientsCallback]); // useEffect dependencies
+  }, [initialLoadComplete, isAdmin, fetchClientsCallback]);
+
+  const statistics = useMemo(() => {
+    if (!clients || clients.length === 0) {
+      return {
+        totalPendingCollection: 0,
+        estimatedTaxes: 0,
+        currentMonthProjection: 0,
+        currentYearProjection: 0,
+        clientsInArrearsCount: 0,
+        totalOverdueAmount: 0,
+      };
+    }
+
+    const today = startOfToday();
+    const currentMonth = getMonth(today);
+    const currentYear = getYear(today);
+
+    let totalPendingCollection = 0;
+    let estimatedTaxes = 0;
+    let currentMonthProjection = 0;
+    let currentYearProjection = 0;
+    let clientsInArrearsCount = 0;
+    let totalOverdueAmount = 0;
+
+    clients.forEach(client => {
+      if (client.paymentAmount > 0) {
+        totalPendingCollection += client.paymentAmount;
+
+        const nextPaymentDate = new Date(client.nextPaymentDate);
+        if (isSameMonth(nextPaymentDate, today) && isSameYear(nextPaymentDate, today)) {
+          currentMonthProjection += client.paymentAmount;
+        }
+        if (isSameYear(nextPaymentDate, today)) {
+          currentYearProjection += client.paymentAmount;
+        }
+
+        if (getDaysUntilDue(client.nextPaymentDate) < 0) {
+          clientsInArrearsCount++;
+          totalOverdueAmount += client.paymentAmount;
+        }
+      }
+
+      if (client.contractValue && client.contractValue > 0 && client.paymentAmount > 0 && client.ivaAmount) {
+        estimatedTaxes += client.ivaAmount;
+      }
+    });
+
+    return {
+      totalPendingCollection,
+      estimatedTaxes,
+      currentMonthProjection,
+      currentYearProjection,
+      clientsInArrearsCount,
+      totalOverdueAmount,
+    };
+  }, [clients]);
+
 
   function getPaymentStatusBadge(nextPaymentDate: string): React.ReactElement {
     const daysUntil = getDaysUntilDue(nextPaymentDate);
@@ -94,7 +150,7 @@ export default function DashboardPage() {
     return <Badge variant="outline">Programado</Badge>;
   }
 
-  if (isLoading && initialLoadComplete) { // Show specific loader if auth is complete but data is loading
+  if (isLoading && initialLoadComplete) {
     return (
       <AppLayout>
         <div className="flex items-center justify-center py-10">
@@ -104,11 +160,8 @@ export default function DashboardPage() {
       </AppLayout>
     );
   }
-  
-  // If initialLoadComplete is false, AppLayout will show its own loader or redirect.
-  // This component's content should only attempt to render meaningful UI once auth is resolved.
 
-  if (error && initialLoadComplete) { // Show error if auth is complete and an error occurred
+  if (error && initialLoadComplete) {
     return (
       <AppLayout>
         <Alert variant="destructive" className="my-4">
@@ -116,7 +169,7 @@ export default function DashboardPage() {
           <AlertTitle>Error al Cargar Clientes</AlertTitle>
           <AlertDescription>
             {error}
-            {error.toLowerCase().includes("permission denied") || error.toLowerCase().includes("permiso denegado") ? (
+             {error.toLowerCase().includes("permission denied") || error.toLowerCase().includes("permiso denegado") ? (
                  <p className="mt-2 text-xs">Asegúrese de que las reglas de seguridad de Firestore permitan el acceso de lectura a la colección 'listapagospendiendes' para administradores autenticados y activos, y que su cuenta de administrador esté configurada correctamente con el estado 'activo: true'.</p>
             ) : null}
           </AlertDescription>
@@ -124,13 +177,8 @@ export default function DashboardPage() {
       </AppLayout>
     );
   }
-  
-  // Only render the main dashboard content if auth is complete, user is admin, and not loading & no error
+
   if (!initialLoadComplete || !isAdmin) {
-    // This state should ideally be caught by AppLayout or the error/loading states above.
-    // If somehow reached, show a generic loading or wait for redirect.
-    // AppLayout handles redirects and global loading, so this might be redundant
-    // or could show a more specific "Checking permissions..." message if AppLayout hasn't redirected yet.
     return (
          <AppLayout>
             <div className="flex items-center justify-center py-10">
@@ -141,13 +189,12 @@ export default function DashboardPage() {
     );
   }
 
-
   return (
     <AppLayout>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-semibold">Gestión de Clientes</h1>
-          <p className="text-muted-foreground">Ver, administrar y agregar nuevos clientes y sus planes de pago.</p>
+          <h1 className="text-2xl font-semibold">Panel de Control RecurPay</h1>
+          <p className="text-muted-foreground">Resumen financiero y gestión de clientes.</p>
         </div>
         <Button asChild>
           <Link href="/clients/new">
@@ -155,6 +202,71 @@ export default function DashboardPage() {
           </Link>
         </Button>
       </div>
+
+      {/* Statistics Panel */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 mb-8">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Recaudación Pendiente General</CardTitle>
+            <CreditCardIcon className="h-5 w-5 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{formatCurrency(statistics.totalPendingCollection)}</div>
+            <p className="text-xs text-muted-foreground">Suma de todas las próximas cuotas</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Impuestos Estimados (IVA Contratos)</CardTitle>
+            <Landmark className="h-5 w-5 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{formatCurrency(statistics.estimatedTaxes)}</div>
+            <p className="text-xs text-muted-foreground">IVA total de contratos con financiación activa</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Proyección Recaudo Mes Actual</CardTitle>
+            <TrendingUp className="h-5 w-5 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{formatCurrency(statistics.currentMonthProjection)}</div>
+            <p className="text-xs text-muted-foreground">Próximas cuotas este mes</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Proyección Recaudo Año Actual</CardTitle>
+            <CalendarClock className="h-5 w-5 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{formatCurrency(statistics.currentYearProjection)}</div>
+            <p className="text-xs text-muted-foreground">Próximas cuotas este año</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Clientes en Mora</CardTitle>
+            <UserX className="h-5 w-5 text-destructive" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{statistics.clientsInArrearsCount}</div>
+            <p className="text-xs text-muted-foreground">Clientes con pagos vencidos</p>
+          </CardContent>
+        </Card>
+         <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Monto Total Vencido</CardTitle>
+            <AlertCircle className="h-5 w-5 text-destructive" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{formatCurrency(statistics.totalOverdueAmount)}</div>
+            <p className="text-xs text-muted-foreground">Suma de cuotas vencidas</p>
+          </CardContent>
+        </Card>
+      </div>
+
       <Card>
         <CardHeader>
           <CardTitle>Lista de Clientes</CardTitle>
@@ -163,7 +275,7 @@ export default function DashboardPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {clients.length === 0 && !isLoading ? ( // Ensure not loading when showing "no clients"
+          {clients.length === 0 && !isLoading ? (
             <div className="text-center py-10">
               <UsersIconLucide className="mx-auto h-12 w-12 text-muted-foreground" />
               <h3 className="mt-2 text-sm font-medium text-foreground">No se encontraron clientes</h3>
@@ -261,17 +373,3 @@ export default function DashboardPage() {
     </AppLayout>
   );
 }
-
-// Removed the local UsersIcon component as lucide-react Users (UsersIconLucide) is imported.
-// If you were using a custom Users icon, ensure UsersIconLucide meets your needs or re-add the custom SVG.
-// For this change, I've assumed you want to use the lucide icon.
-// The import was `import { PlusCircle, Edit3, UsersIcon as Users ...}`
-// I changed `Users` to `UsersIconLucide` in imports and used `UsersIconLucide` in the JSX for clarity.
-// If the original Users was meant to be the custom SVG, that was an oversight in previous steps that it was still there.
-// Given the error, it's unlikely related to the icon, but good to keep imports clean.
-// The error `Error fetching clients from Firestore` points to data fetching.
-
-// Note: The previous custom UsersIcon SVG component was removed.
-// Using `UsersIconLucide` from `lucide-react` for the "No clients found" placeholder.
-// If you had a specific reason for the custom SVG, it would need to be re-added or the import aliased carefully.
-
