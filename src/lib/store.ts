@@ -1,6 +1,7 @@
 
 import type { Client, PaymentRecord } from '@/types';
 import { db } from '@/lib/firebase'; // Client SDK for all operations now
+import { adminDb } from '@/lib/firebase-admin'; // Admin SDK for server-side writes
 import {
   collection,
   getDocs as getDocsClient,
@@ -35,7 +36,7 @@ export async function getClients(): Promise<Client[]> {
   } catch (error: any) {
     console.error("Error fetching clients from Firestore (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
      if (error.code === 'permission-denied') {
-      throw new Error("Permiso denegado por Firestore al buscar clientes. Verifique las reglas de seguridad.");
+      throw new Error("Permiso denegado por Firestore al buscar clientes. Verifique las reglas de seguridad y que los datos del administrador (UID y campo 'activo') sean correctos en la colección 'administradores'.");
     }
     throw new Error(`Error al buscar clientes de Firestore: ${error.message || 'Error desconocido de Firestore'}. Código: ${error.code || 'N/A'}`);
   }
@@ -59,18 +60,18 @@ export async function getClientById(id: string): Promise<Client | undefined> {
   }
 }
 
-// WRITE operations now also use the Client SDK (db)
+// WRITE operations use Admin SDK for Server Actions
 export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ client?: Client, error?: string }> {
-   if (!db) {
-    console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in addClient. Firebase may not be initialized correctly on the client-side or the import is failing.");
-    return { error: "Error de la aplicación: La conexión con la base de datos no está inicializada. Contacte al administrador." };
+  if (!adminDb) {
+    const errorMessage = "Error de servidor: La conexión con la base de datos (admin) no está inicializada. Por favor, revise los logs del servidor y contacte al administrador.";
+    console.error("CRITICAL_STORE_ERROR (addClient): adminDb is null. Firebase Admin SDK might not be initialized correctly. Ensure GOOGLE_APPLICATION_CREDENTIALS_JSON is set and the server was restarted.");
+    return { error: errorMessage };
   }
   try {
-    const clientsCollectionRef = collection(db, CLIENTS_COLLECTION);
+    const clientsCollectionRef = adminDb.collection(CLIENTS_COLLECTION);
     
-    const emailQuery = queryClient(clientsCollectionRef, whereClient('email', '==', clientData.email));
-    const emailQuerySnapshot = await getDocsClient(emailQuery);
-    if (!emailQuerySnapshot.empty) {
+    const emailQuery = await clientsCollectionRef.where('email', '==', clientData.email).get();
+    if (!emailQuery.empty) {
       return { error: "La dirección de correo electrónico ya existe para otro cliente." };
     }
 
@@ -78,124 +79,131 @@ export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ clien
         ...clientData,
         paymentsMadeCount: clientData.paymentsMadeCount || 0,
         status: clientData.status || 'active',
-        createdAt: clientData.createdAt || Timestamp.now().toDate().toISOString() 
+        createdAt: clientData.createdAt || adminDb.Timestamp.now().toDate().toISOString() 
     };
 
-    const docRef = await addDocClient(clientsCollectionRef, dataToSave);
+    const docRef = await clientsCollectionRef.add(dataToSave);
     return { client: { id: docRef.id, ...dataToSave } };
   } catch (error: any) {
-    console.error("Error adding client to Firestore (Client SDK) (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    console.error("Error adding client to Firestore (Admin SDK) (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     let userMessage = "Error al agregar el cliente. Inténtelo de nuevo.";
     if (error.code === 'permission-denied') {
-        userMessage = "Permiso denegado por Firestore al intentar guardar el cliente. Verifique las reglas de seguridad. Si las operaciones se realizan desde el servidor (ej. Server Actions), el Firebase Client SDK no tendrá un usuario autenticado, causando este error con reglas que requieran autenticación.";
+         userMessage = "Permiso denegado por Firestore al intentar guardar el cliente. Esto es inesperado si se usa el SDK de Admin, verifique la inicialización del SDK de Admin y los logs del servidor.";
     } else if (error.code === 'invalid-argument') {
         userMessage = "Error al agregar el cliente: argumento inválido. Verifique los datos enviados.";
     } else if (error instanceof Error && (error.message.includes("undefined") || error.message.includes("NaN"))) {
         userMessage = `Error al agregar cliente: uno o más campos tienen valores inválidos (undefined o NaN). Por favor, revise los datos del formulario y los cálculos. Detalle: ${error.message}`;
     } else if (error instanceof Error) {
-        userMessage = `Error al agregar cliente (Client SDK): ${error.message}`;
+        userMessage = `Error al agregar cliente (Admin SDK): ${error.message}`;
     }
     return { error: userMessage };
   }
 }
 
 export async function updateClient(id: string, clientData: Partial<Omit<Client, 'id'>>): Promise<{ client?: Client, error?: string }> {
-   if (!db) {
-    console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in updateClient. Firebase may not be initialized correctly on the client-side or the import is failing.");
-    return { error: "Error de la aplicación: La conexión con la base de datos no está inicializada. Contacte al administrador." };
+  if (!adminDb) {
+    const errorMessage = "Error de servidor: La conexión con la base de datos (admin) no está inicializada. Por favor, revise los logs del servidor y contacte al administrador.";
+    console.error("CRITICAL_STORE_ERROR (updateClient): adminDb is null.");
+    return { error: errorMessage };
   }
   try {
-    const clientDocRef = docClient(db, CLIENTS_COLLECTION, id);
-    const clientDocSnap = await getDocClient(clientDocRef);
+    const clientDocRef = adminDb.collection(CLIENTS_COLLECTION).doc(id);
+    const clientDocSnap = await clientDocRef.get();
 
-    if (!clientDocSnap.exists()) {
+    if (!clientDocSnap.exists) {
       return { error: "Cliente no encontrado." };
     }
 
     const originalClientData = { id: clientDocSnap.id, ...clientDocSnap.data() } as Client;
 
     if (clientData.email && clientData.email !== originalClientData.email) {
-      const clientsCollectionRef = collection(db, CLIENTS_COLLECTION);
-      const emailQuery = queryClient(clientsCollectionRef, whereClient('email', '==', clientData.email));
-      const emailQuerySnapshot = await getDocsClient(emailQuery);
-      if (!emailQuerySnapshot.empty) {
-        const existingClientDoc = emailQuerySnapshot.docs[0];
+      const clientsCollectionRef = adminDb.collection(CLIENTS_COLLECTION);
+      const emailQuery = await clientsCollectionRef.where('email', '==', clientData.email).get();
+      if (!emailQuery.empty) {
+        const existingClientDoc = emailQuery.docs[0];
         if (existingClientDoc.id !== id) {
           return { error: "La dirección de correo electrónico ya existe para otro cliente." };
         }
       }
     }
     
-    // Ensure all fields that could be partial are handled correctly
-    // by merging with original data.
-    const dataToUpdate: Partial<Client> = {
-      ...clientData, // incoming partial data
-    };
+    const dataToUpdate: Partial<Client> = { ...clientData };
 
-    await updateDocClient(clientDocRef, dataToUpdate);
+    await clientDocRef.update(dataToUpdate);
     
-    const updatedClientSnapshot = await getDocClient(clientDocRef);
+    const updatedClientSnapshot = await clientDocRef.get();
     const updatedClient = { id: updatedClientSnapshot.id, ...updatedClientSnapshot.data() } as Client;
 
     return { client: updatedClient };
 
   } catch (error: any) {
-    console.error("Error updating client in Firestore (Client SDK) (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    console.error("Error updating client in Firestore (Admin SDK) (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     let userMessage = "Error al actualizar el cliente. Inténtelo de nuevo.";
     if (error.code === 'permission-denied') {
-        userMessage = "Permiso denegado por Firestore al intentar actualizar el cliente. Verifique las reglas de seguridad. Si las operaciones se realizan desde el servidor (ej. Server Actions), el Firebase Client SDK no tendrá un usuario autenticado.";
+        userMessage = "Permiso denegado por Firestore al intentar actualizar el cliente. Inesperado con SDK de Admin.";
     } else if (error.code === 'invalid-argument') {
         userMessage = "Error al actualizar el cliente: argumento inválido. Verifique los datos enviados.";
      } else if (error instanceof Error && (error.message.includes("undefined") || error.message.includes("NaN"))) {
         userMessage = `Error al actualizar cliente: uno o más campos tienen valores inválidos (undefined o NaN). Por favor, revise los datos del formulario y los cálculos. Detalle: ${error.message}`;
     } else if (error instanceof Error) {
-        userMessage = `Error al actualizar cliente (Client SDK): ${error.message}`;
+        userMessage = `Error al actualizar cliente (Admin SDK): ${error.message}`;
     }
     return { error: userMessage };
   }
 }
 
 export async function deleteClient(id: string): Promise<{ success?: boolean, error?: string }> {
-   if (!db) {
-    console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in deleteClient. Firebase may not be initialized correctly on the client-side or the import is failing.");
-    return { error: "Error de la aplicación: La conexión con la base de datos no está inicializada. Contacte al administrador." };
+  if (!adminDb) {
+    const errorMessage = "Error de servidor: La conexión con la base de datos (admin) no está inicializada. Por favor, revise los logs del servidor y contacte al administrador.";
+    console.error("CRITICAL_STORE_ERROR (deleteClient): adminDb is null.");
+    return { error: errorMessage };
   }
   try {
-    const clientDocRef = docClient(db, CLIENTS_COLLECTION, id);
-    await deleteDocClient(clientDocRef);
-    // Optionally, delete paymentHistory subcollection if needed, but this requires more complex logic
-    // For now, we only delete the client document.
+    const clientDocRef = adminDb.collection(CLIENTS_COLLECTION).doc(id);
+    
+    // Optional: Delete paymentHistory subcollection. This requires a batched write or recursive delete function.
+    // For simplicity, this example only deletes the main client document.
+    // Consider implementing subcollection deletion if strict data removal is required.
+    // Example (simple, may need adjustment for large subcollections):
+    // const paymentHistoryRef = clientDocRef.collection(PAYMENT_HISTORY_SUBCOLLECTION);
+    // const paymentHistorySnapshot = await paymentHistoryRef.get();
+    // const batch = adminDb.batch();
+    // paymentHistorySnapshot.docs.forEach(doc => batch.delete(doc.ref));
+    // await batch.commit();
+
+    await clientDocRef.delete();
     return { success: true };
   } catch (error: any) {
-    console.error("Error deleting client from Firestore (Client SDK) (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    console.error("Error deleting client from Firestore (Admin SDK) (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     let userMessage = "Error al eliminar el cliente. Inténtelo de nuevo.";
     if (error.code === 'permission-denied') {
-        userMessage = "Permiso denegado por Firestore al intentar eliminar el cliente. Verifique las reglas de seguridad. Si las operaciones se realizan desde el servidor (ej. Server Actions), el Firebase Client SDK no tendrá un usuario autenticado.";
+        userMessage = "Permiso denegado por Firestore al intentar eliminar el cliente. Inesperado con SDK de Admin.";
     } else if (error instanceof Error) {
-        userMessage = `Error al eliminar cliente (Client SDK): ${error.message}`;
+        userMessage = `Error al eliminar cliente (Admin SDK): ${error.message}`;
     }
     return { error: userMessage };
   }
 }
 
 export async function addPaymentToHistory(clientId: string, paymentData: Omit<PaymentRecord, 'id' | 'recordedAt'>): Promise<{ record?: PaymentRecord, error?: string }> {
-  if (!db) {
-    console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in addPaymentToHistory.");
-    return { error: "Error de la aplicación: La conexión con la base de datos no está inicializada." };
+  if (!adminDb) {
+     const errorMessage = "Error de servidor: La conexión con la base de datos (admin) no está inicializada. Por favor, revise los logs del servidor y contacte al administrador.";
+    console.error("CRITICAL_STORE_ERROR (addPaymentToHistory): adminDb is null.");
+    return { error: errorMessage };
   }
   try {
-    const historyCollectionRef = collection(db, CLIENTS_COLLECTION, clientId, PAYMENT_HISTORY_SUBCOLLECTION);
+    const historyCollectionRef = adminDb.collection(CLIENTS_COLLECTION).doc(clientId).collection(PAYMENT_HISTORY_SUBCOLLECTION);
     const dataToSave = {
       ...paymentData,
-      recordedAt: Timestamp.now().toDate().toISOString(),
+      recordedAt: adminDb.Timestamp.now().toDate().toISOString(),
     };
-    const docRef = await addDocClient(historyCollectionRef, dataToSave);
+    const docRef = await historyCollectionRef.add(dataToSave);
     return { record: { id: docRef.id, ...dataToSave } };
   } catch (error: any) {
-    console.error(`Error adding payment to history for client ${clientId} (Client SDK):`, JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    console.error(`Error adding payment to history for client ${clientId} (Admin SDK):`, JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     let userMessage = "Error al registrar el pago en el historial.";
     if (error.code === 'permission-denied') {
-      userMessage = "Permiso denegado por Firestore al registrar el pago en el historial. Verifique las reglas de seguridad.";
+      userMessage = "Permiso denegado por Firestore al registrar el pago en el historial. Inesperado con SDK de Admin.";
     } else if (error instanceof Error) {
       userMessage = `Error al registrar pago en historial: ${error.message}`;
     }
@@ -203,10 +211,11 @@ export async function addPaymentToHistory(clientId: string, paymentData: Omit<Pa
   }
 }
 
+// Uses Client SDK as this will be called from a client component or a server component that needs user context for rules
 export async function getPaymentHistory(clientId: string): Promise<PaymentRecord[]> {
   if (!db) {
     console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in getPaymentHistory.");
-    return []; // Or throw an error
+    return [];
   }
   try {
     const historyCollectionRef = collection(db, CLIENTS_COLLECTION, clientId, PAYMENT_HISTORY_SUBCOLLECTION);
@@ -218,8 +227,10 @@ export async function getPaymentHistory(clientId: string): Promise<PaymentRecord
     }));
   } catch (error: any) {
     console.error(`Error fetching payment history for client ${clientId} (Client SDK):`, JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    if (error.code === 'permission-denied') {
+      throw new Error(`Permiso denegado por Firestore al buscar historial de pagos para el cliente ${clientId}. Verifique las reglas de seguridad.`);
+    }
     // Depending on how you want to handle this, you could throw or return empty array with a console warning
     return [];
   }
 }
-
