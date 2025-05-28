@@ -26,12 +26,6 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es" suppressHydrationWarning>
-      {/*
-        Ensure there is NO WHITESPACE OR COMMENTS between the <html> tag above
-        and the <body> tag below.
-        Next.js automatically manages the <head> tag and its contents
-        based on the `metadata` object exported from layouts or pages.
-      */}
       <body className={`${openSans.variable} font-sans antialiased`}>
         <AuthProvider>
           <AppProviders>
