@@ -7,7 +7,7 @@ import type { z } from 'zod';
 import { useRouter } from 'next/navigation';
 import React, { useEffect, useState, useCallback } from 'react';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { storage } from '@/lib/firebase';
+import { storage, auth } from '@/lib/firebase'; // Imported auth
 
 import { Button } from '@/components/ui/button';
 import {
@@ -169,6 +169,14 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
   ) => {
     if (!file) return;
 
+    // Diagnostic log
+    console.log(
+      'Attempting file upload. Current Firebase Auth User UID:', auth.currentUser?.uid,
+      'Email:', auth.currentUser?.email,
+      'Admin status from AuthContext (if available, else check context directly):', (window as any).authContext?.isAdmin 
+    );
+
+
     setState(prev => ({ ...prev, isUploading: true, file, progress: 0, error: null }));
     const uniqueFileName = `${fileType}_${Date.now()}_${file.name}`;
     // For simplicity, using client email + type for path. Consider client ID if available early.
@@ -185,7 +193,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
       (error) => {
         console.error(`Upload error (${fileType}):`, error);
         setState(prev => ({ ...prev, isUploading: false, error: error.message, progress: 0 }));
-        toast({ title: `Error al subir ${fileType}`, description: error.message, variant: 'destructive' });
+        toast({ title: `Error al subir ${fileType === 'acceptanceLetter' ? 'carta de aceptación' : 'contrato'}`, description: error.message, variant: 'destructive' });
       },
       async () => {
         const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
@@ -197,7 +205,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
           form.setValue('contractFileUrl', downloadURL, { shouldValidate: true });
           form.setValue('contractFileName', file.name, { shouldValidate: true });
         }
-        toast({ title: `${fileType} subido`, description: `${file.name} subido con éxito.` });
+        toast({ title: `${fileType === 'acceptanceLetter' ? 'Carta de aceptación subida' : 'Contrato subido'}`, description: `${file.name} subido con éxito.` });
       }
     );
   }, [form, toast]);
@@ -295,10 +303,10 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
                   field.onChange(undefined);
                 } else {
                   const num = parseFloat(val);
-                  field.onChange(isNaN(num) ? undefined : num); // Keep undefined if parse fails for optional fields
+                  field.onChange(isNaN(num) ? undefined : num); 
                 }
               }}
-              onBlur={field.onBlur} // Keep RHF blur handling
+              onBlur={field.onBlur} 
               ref={field.ref}
               name={field.name}
               disabled={field.disabled}
@@ -484,4 +492,5 @@ const FileInputField = ({
     </Card>
   );
 }
+
 
