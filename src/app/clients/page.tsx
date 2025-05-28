@@ -235,7 +235,9 @@ export default function ClientsListPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredClients.map((client: Client) => (
+              {filteredClients.map((client: Client) => {
+                const daysUntilDueForClient = getDaysUntilDue(client.nextPaymentDate);
+                return (
                 <TableRow key={client.id}>
                   <TableCell>
                     <div className="font-medium">{client.firstName} {client.lastName}</div>
@@ -287,12 +289,15 @@ export default function ClientsListPage() {
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
-                      {client.paymentAmount > 0 && client.status === 'active' && <SendReminderButton client={client} />}
+                      {client.paymentAmount > 0 && client.status === 'active' && (
+                        <SendReminderButton client={client} daysUntilDue={daysUntilDueForClient} />
+                      )}
                       <DeleteClientDialog clientId={client.id} clientName={`${client.firstName} ${client.lastName}`} />
                     </div>
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
           )}

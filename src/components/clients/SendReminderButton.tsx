@@ -15,9 +15,10 @@ import {
 
 interface SendReminderButtonProps {
   client: Client;
+  daysUntilDue: number;
 }
 
-export default function SendReminderButton({ client }: SendReminderButtonProps) {
+export default function SendReminderButton({ client, daysUntilDue }: SendReminderButtonProps) {
   const [isSending, setIsSending] = useState(false);
   const { toast } = useToast();
 
@@ -50,6 +51,9 @@ export default function SendReminderButton({ client }: SendReminderButtonProps) 
     }
   };
 
+  const isReminderPeriodActive = daysUntilDue >= -5 && daysUntilDue <= 5;
+  const isDisabled = isSending || !isReminderPeriodActive;
+
   return (
     <TooltipProvider>
       <Tooltip>
@@ -58,14 +62,14 @@ export default function SendReminderButton({ client }: SendReminderButtonProps) 
             variant="outline"
             size="icon"
             onClick={handleSendReminder}
-            disabled={isSending}
+            disabled={isDisabled}
             aria-label={`Enviar recordatorio de pago a ${client.firstName} ${client.lastName}`}
           >
             {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
           </Button>
         </TooltipTrigger>
         <TooltipContent>
-          <p>Enviar Recordatorio de Pago</p>
+          {isReminderPeriodActive ? <p>Enviar Recordatorio de Pago</p> : <p>Recordatorio no aplicable en esta fecha</p>}
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
