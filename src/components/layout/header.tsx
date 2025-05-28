@@ -2,7 +2,7 @@
 'use client';
 
 import Link from 'next/link';
-import { CreditCard, Menu, Users, LayoutDashboard, LogOut } from 'lucide-react';
+import { CreditCard, Menu, Users, LogOut, BarChart3 } from 'lucide-react'; // Added BarChart3
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger, SheetClose } from '@/components/ui/sheet';
 import {
@@ -18,7 +18,8 @@ import { usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 
 const navItems = [
-  { href: '/dashboard', label: 'Panel Principal', icon: LayoutDashboard },
+  { href: '/dashboard', label: 'Panel de Analíticas', icon: BarChart3 },
+  { href: '/clients', label: 'Clientes', icon: Users },
   { href: '/clients/new', label: 'Agregar Cliente', icon: Users },
 ];
 
@@ -28,7 +29,8 @@ export function AppHeader() {
   const { user, isAdmin, logout, loading, initialLoadComplete } = useAuth();
 
   const getPageTitle = () => {
-    if (pathname.startsWith('/dashboard')) return 'Panel Principal';
+    if (pathname === ('/dashboard')) return 'Panel de Analíticas';
+    if (pathname === ('/clients')) return 'Lista de Clientes';
     if (pathname.startsWith('/clients/new')) return 'Crear Nuevo Cliente';
     if (pathname.match(/^\/clients\/[^/]+\/edit$/)) return 'Editar Cliente';
     if (pathname.startsWith('/login')) return 'Inicio de Sesión de Administrador';
@@ -60,12 +62,16 @@ export function AppHeader() {
                 <CreditCard className="h-5 w-5 transition-all group-hover:scale-110" />
                 <span className="sr-only">RecurPay</span>
               </Link>
-              {navItems.map((item) => (
+              {navItems.map((item) => {
+                  const isActive = item.href === '/clients' 
+                    ? pathname.startsWith('/clients') 
+                    : pathname === item.href;
+                return (
                 <SheetClose asChild key={item.href}>
                   <Link
                     href={item.href}
                     className={`flex items-center gap-4 px-2.5 py-2 rounded-lg ${
-                      pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))
+                      isActive
                         ? 'text-sidebar-accent-foreground bg-sidebar-accent'
                         : 'text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent'
                     }`}
@@ -74,7 +80,8 @@ export function AppHeader() {
                     {item.label}
                   </Link>
                 </SheetClose>
-              ))}
+                );
+              })}
                  <SheetClose asChild>
                     <Button onClick={logout} variant="ghost" className="flex items-center gap-4 px-2.5 py-2 rounded-lg text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent justify-start">
                         <LogOut className="h-5 w-5" />

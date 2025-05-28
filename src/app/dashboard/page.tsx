@@ -1,55 +1,49 @@
 
-'use client'; // Make this a Client Component
+'use client';
 
 import Link from 'next/link';
-import { PlusCircle, Edit3, Users as UsersIconLucide, FileText, DollarSign, LinkIcon, Loader2, Terminal, Landmark, TrendingUp, CalendarClock, UserX, CreditCard as CreditCardIcon, AlertCircle } from 'lucide-react';
+import { PlusCircle, Users as UsersIconLucide, FileText, DollarSign, LinkIcon as LinkIconLucide, Loader2, Terminal, Landmark, TrendingUp, CalendarClock, UserX, CreditCard as CreditCardIcon, AlertCircle, LineChart, BarChart3, PieChartIcon } from 'lucide-react';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-  CardFooter,
 } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import AppLayout from '@/components/layout/app-layout';
 import { getClients } from '@/lib/store';
 import { formatDate, formatCurrency, getDaysUntilDue } from '@/lib/utils';
-import DeleteClientDialog from '@/components/clients/delete-client-dialog';
-import SendReminderButton from '@/components/clients/SendReminderButton';
 import type { Client } from '@/types';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { FINANCING_OPTIONS } from '@/lib/constants';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useAuth } from '@/contexts/AuthContext';
-import { isSameMonth, isSameYear, getMonth, getYear, startOfToday } from 'date-fns';
+import { 
+  isSameMonth, isSameYear, getMonth, getYear, startOfToday, 
+  parseISO, format as formatDateFns, addMonths, subMonths,
+  startOfMonth, endOfMonth 
+} from 'date-fns';
+import { es } from 'date-fns/locale';
 
-export default function DashboardPage() {
+import MonthlyRevenueChart from '@/components/analytics/MonthlyRevenueChart';
+import ClientGrowthChart from '@/components/analytics/ClientGrowthChart';
+import FinancingPlanDistributionChart from '@/components/analytics/FinancingPlanDistributionChart';
+import { FINANCING_OPTIONS } from '@/lib/constants';
+
+
+export default function AnalyticsDashboardPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { user, isAdmin, initialLoadComplete } = useAuth();
 
   const fetchClientsCallback = useCallback(async () => {
-    if (!isAdmin) {
+    if (!initialLoadComplete || !isAdmin) {
+      if (initialLoadComplete && !isAdmin) {
         setError("Acceso denegado. No tiene permisos para ver esta información.");
-        setIsLoading(false);
-        return;
+      }
+      setIsLoading(false);
+      return;
     }
     setIsLoading(true);
     setError(null);
@@ -74,8 +68,6 @@ export default function DashboardPage() {
         setIsLoading(false);
         setClients([]);
       }
-    } else {
-      setIsLoading(true);
     }
   }, [initialLoadComplete, isAdmin, fetchClientsCallback]);
 
@@ -88,6 +80,11 @@ export default function DashboardPage() {
         currentYearProjection: 0,
         clientsInArrearsCount: 0,
         totalOverdueAmount: 0,
+        totalContractValue: 0,
+        totalDownPayments: 0,
+        totalFinancedAmount: 0,
+        totalFinancingInterest: 0,
+        totalProjectedRevenue: 0,
       };
     }
 
@@ -101,16 +98,24 @@ export default function DashboardPage() {
     let currentYearProjection = 0;
     let clientsInArrearsCount = 0;
     let totalOverdueAmount = 0;
+    let totalContractValue = 0;
+    let totalDownPayments = 0;
+    let totalFinancedAmount = 0;
+    let totalFinancingInterest = 0;
+    let totalProjectedRevenue = 0;
+
 
     clients.forEach(client => {
       if (client.paymentAmount > 0) {
-        totalPendingCollection += client.paymentAmount;
+        totalPendingCollection += client.paymentAmount; // Sums up one next payment per client
 
-        const nextPaymentDate = new Date(client.nextPaymentDate);
+        const nextPaymentDate = parseISO(client.nextPaymentDate);
         if (isSameMonth(nextPaymentDate, today) && isSameYear(nextPaymentDate, today)) {
           currentMonthProjection += client.paymentAmount;
         }
         if (isSameYear(nextPaymentDate, today)) {
+          // This is a simple sum of next payments in the year. For a true annual projection,
+          // one might need to sum up all expected payments for each client within the year.
           currentYearProjection += client.paymentAmount;
         }
 
@@ -120,8 +125,29 @@ export default function DashboardPage() {
         }
       }
 
-      if (client.contractValue && client.contractValue > 0 && client.paymentAmount > 0 && client.ivaAmount) {
-        estimatedTaxes += client.ivaAmount;
+      if (client.contractValue && client.contractValue > 0) {
+        totalContractValue += client.contractValue;
+        if (client.ivaAmount) {
+          estimatedTaxes += client.ivaAmount;
+        }
+        if (client.downPayment) {
+          totalDownPayments += client.downPayment;
+        }
+        if(client.amountToFinance) {
+            totalFinancedAmount += client.amountToFinance;
+        }
+        if(client.financingInterestAmount) {
+            totalFinancingInterest += client.financingInterestAmount;
+        }
+        if(client.totalAmountWithInterest && client.financingPlan && client.financingPlan > 0) {
+            totalProjectedRevenue += (client.downPayment || 0) + client.totalAmountWithInterest;
+        } else if (client.totalWithIva) {
+            totalProjectedRevenue += client.totalWithIva;
+        }
+      } else if (client.paymentAmount > 0) { // Recurring service without contract value
+        // For simple recurring services, totalProjectedRevenue might be harder to define without an end date.
+        // Here, we can consider each paymentAmount as part of ongoing revenue.
+        // This part may need business logic refinement based on how you define "total projected revenue" for non-contract clients.
       }
     });
 
@@ -132,30 +158,96 @@ export default function DashboardPage() {
       currentYearProjection,
       clientsInArrearsCount,
       totalOverdueAmount,
+      totalContractValue,
+      totalDownPayments,
+      totalFinancedAmount,
+      totalFinancingInterest,
+      totalProjectedRevenue,
     };
   }, [clients]);
 
+  const monthlyRevenueData = useMemo(() => {
+    if (!clients) return [];
+    const data: { month: string; revenue: number }[] = [];
+    const today = new Date();
+    
+    for (let i = 0; i < 6; i++) { // Project for next 6 months
+      const targetMonthDate = addMonths(today, i);
+      const monthName = formatDateFns(targetMonthDate, 'MMM yyyy', { locale: es });
+      let monthlySum = 0;
+      clients.forEach(client => {
+        if (client.paymentAmount > 0) {
+          const nextPaymentDate = parseISO(client.nextPaymentDate);
+          // This simple projection assumes the *next* payment. 
+          // A more complex one would track all payments due in that month.
+          if (isSameMonth(nextPaymentDate, targetMonthDate) && isSameYear(nextPaymentDate, targetMonthDate)) {
+            monthlySum += client.paymentAmount;
+          }
+        }
+      });
+      data.push({ month: monthName, revenue: monthlySum });
+    }
+    return data;
+  }, [clients]);
 
-  function getPaymentStatusBadge(nextPaymentDate: string): React.ReactElement {
-    const daysUntil = getDaysUntilDue(nextPaymentDate);
-    if (daysUntil < 0) {
-      return <Badge variant="destructive">Vencido</Badge>;
+  const clientGrowthData = useMemo(() => {
+    if (!clients) return [];
+    const data: { month: string; count: number }[] = [];
+    const today = new Date();
+    
+    for (let i = 5; i >= 0; i--) { // Last 6 months including current
+      const targetMonthDate = subMonths(today, i);
+      const monthName = formatDateFns(targetMonthDate, 'MMM yyyy', { locale: es });
+      let clientsInMonth = 0;
+      clients.forEach(client => {
+        const createdAtDate = parseISO(client.createdAt);
+        if (isSameMonth(createdAtDate, targetMonthDate) && isSameYear(createdAtDate, targetMonthDate)) {
+          clientsInMonth++;
+        }
+      });
+      data.push({ month: monthName, count: clientsInMonth });
     }
-    if (daysUntil <= 3) {
-      return <Badge className="bg-yellow-500 text-black hover:bg-yellow-600 dark:bg-yellow-600 dark:text-white dark:hover:bg-yellow-700">Vence Pronto</Badge>;
+    return data;
+  }, [clients]);
+
+  const financingPlanDistributionData = useMemo(() => {
+    if (!clients) return [];
+    const distribution: { name: string; value: number; fill: string }[] = [];
+    const planCounts: { [key: string]: number } = {};
+
+    clients.forEach(client => {
+      const planKey = client.financingPlan !== undefined ? String(client.financingPlan) : "0";
+      const planLabel = FINANCING_OPTIONS[Number(planKey)]?.label || "N/A";
+      planCounts[planLabel] = (planCounts[planLabel] || 0) + 1;
+    });
+
+    const colors = ["hsl(var(--chart-1))", "hsl(var(--chart-2))", "hsl(var(--chart-3))", "hsl(var(--chart-4))", "hsl(var(--chart-5))"];
+    let colorIndex = 0;
+    for (const [planName, count] of Object.entries(planCounts)) {
+      distribution.push({ name: planName, value: count, fill: colors[colorIndex % colors.length] });
+      colorIndex++;
     }
-    if (daysUntil <= 7) {
-      return <Badge variant="secondary">Próximo</Badge>;
-    }
-    return <Badge variant="outline">Programado</Badge>;
+    return distribution;
+  }, [clients]);
+
+
+  if (!initialLoadComplete) {
+    return (
+      <AppLayout>
+        <div className="flex items-center justify-center py-10">
+          <Loader2 className="h-12 w-12 animate-spin text-primary" />
+          <p className="ml-4 text-muted-foreground">Verificando acceso...</p>
+        </div>
+      </AppLayout>
+    );
   }
-
+  
   if (isLoading && initialLoadComplete) {
     return (
       <AppLayout>
         <div className="flex items-center justify-center py-10">
           <Loader2 className="h-12 w-12 animate-spin text-primary" />
-          <p className="ml-4 text-muted-foreground">Cargando clientes...</p>
+          <p className="ml-4 text-muted-foreground">Cargando datos del panel...</p>
         </div>
       </AppLayout>
     );
@@ -166,68 +258,55 @@ export default function DashboardPage() {
       <AppLayout>
         <Alert variant="destructive" className="my-4">
           <Terminal className="h-4 w-4" />
-          <AlertTitle>Error al Cargar Clientes</AlertTitle>
+          <AlertTitle>Error al Cargar Datos</AlertTitle>
           <AlertDescription>
             {error}
              {error.toLowerCase().includes("permission denied") || error.toLowerCase().includes("permiso denegado") ? (
-                 <p className="mt-2 text-xs">Asegúrese de que las reglas de seguridad de Firestore permitan el acceso de lectura a la colección 'listapagospendiendes' para administradores autenticados y activos, y que su cuenta de administrador esté configurada correctamente con el estado 'activo: true'.</p>
+                 <p className="mt-2 text-xs">Asegúrese de que las reglas de seguridad de Firestore permitan el acceso requerido y que su cuenta de administrador esté configurada correctamente.</p>
             ) : null}
           </AlertDescription>
         </Alert>
       </AppLayout>
     );
   }
-
-  if (!initialLoadComplete || !isAdmin) {
-    return (
-         <AppLayout>
-            <div className="flex items-center justify-center py-10">
-                <Loader2 className="h-12 w-12 animate-spin text-primary" />
-                <p className="ml-4 text-muted-foreground">Verificando acceso...</p>
-            </div>
-        </AppLayout>
+  
+  if (!isAdmin && initialLoadComplete) {
+     return (
+      <AppLayout>
+        <Alert variant="destructive" className="my-4">
+          <Terminal className="h-4 w-4" />
+          <AlertTitle>Acceso Denegado</AlertTitle>
+          <AlertDescription>
+            No tiene permisos de administrador para ver esta página.
+          </AlertDescription>
+        </Alert>
+      </AppLayout>
     );
   }
 
   return (
     <AppLayout>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold">Panel de Control RecurPay</h1>
-          <p className="text-muted-foreground">Resumen financiero y gestión de clientes.</p>
-        </div>
-        <Button asChild>
-          <Link href="/clients/new">
-            <PlusCircle className="mr-2 h-4 w-4" /> Agregar Nuevo Cliente
-          </Link>
-        </Button>
+      <div className="mb-6">
+        <h1 className="text-3xl font-semibold">Panel de Analíticas RecurPay</h1>
+        <p className="text-muted-foreground">Métricas clave, proyecciones y rendimiento de su negocio.</p>
       </div>
 
       {/* Statistics Panel */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 mb-8">
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 mb-8">
+        {/* Fila 1: Estadísticas Generales de Recaudo */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Recaudación Pendiente General</CardTitle>
+            <CardTitle className="text-sm font-medium">Recaudación Próxima Cuota</CardTitle>
             <CreditCardIcon className="h-5 w-5 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{formatCurrency(statistics.totalPendingCollection)}</div>
-            <p className="text-xs text-muted-foreground">Suma de todas las próximas cuotas</p>
+            <p className="text-xs text-muted-foreground">Suma de la próxima cuota de cada cliente</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Impuestos Estimados (IVA Contratos)</CardTitle>
-            <Landmark className="h-5 w-5 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(statistics.estimatedTaxes)}</div>
-            <p className="text-xs text-muted-foreground">IVA total de contratos con financiación activa</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Proyección Recaudo Mes Actual</CardTitle>
+            <CardTitle className="text-sm font-medium">Proyección Mes Actual</CardTitle>
             <TrendingUp className="h-5 w-5 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -237,7 +316,7 @@ export default function DashboardPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Proyección Recaudo Año Actual</CardTitle>
+            <CardTitle className="text-sm font-medium">Proyección Año Actual</CardTitle>
             <CalendarClock className="h-5 w-5 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -245,6 +324,18 @@ export default function DashboardPage() {
             <p className="text-xs text-muted-foreground">Próximas cuotas este año</p>
           </CardContent>
         </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Impuestos Estimados (IVA)</CardTitle>
+            <Landmark className="h-5 w-5 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{formatCurrency(statistics.estimatedTaxes)}</div>
+            <p className="text-xs text-muted-foreground">IVA de contratos con financiación</p>
+          </CardContent>
+        </Card>
+        
+        {/* Fila 2: Estadísticas de Mora */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Clientes en Mora</CardTitle>
@@ -265,111 +356,132 @@ export default function DashboardPage() {
             <p className="text-xs text-muted-foreground">Suma de cuotas vencidas</p>
           </CardContent>
         </Card>
+
+        {/* Fila 3: Estadísticas "Contables" / Valor de Contratos */}
+         <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Valor Total Contratado</CardTitle>
+            <FileText className="h-5 w-5 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{formatCurrency(statistics.totalContractValue)}</div>
+            <p className="text-xs text-muted-foreground">Suma de valores de contrato (antes de IVA)</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Abonos Registrados</CardTitle>
+            <DollarSign className="h-5 w-5 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{formatCurrency(statistics.totalDownPayments)}</div>
+            <p className="text-xs text-muted-foreground">Suma de los abonos iniciales</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Financiado (Bruto)</CardTitle>
+            <DollarSign className="h-5 w-5 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{formatCurrency(statistics.totalFinancedAmount)}</div>
+            <p className="text-xs text-muted-foreground">Suma de montos a financiar</p>
+          </CardContent>
+        </Card>
+         <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Intereses Financiación</CardTitle>
+            <TrendingUp className="h-5 w-5 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{formatCurrency(statistics.totalFinancingInterest)}</div>
+            <p className="text-xs text-muted-foreground">Suma de intereses por financiación</p>
+          </CardContent>
+        </Card>
+         <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Ingreso Total Proyectado</CardTitle>
+            <DollarSign className="h-5 w-5 text-accent" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{formatCurrency(statistics.totalProjectedRevenue)}</div>
+            <p className="text-xs text-muted-foreground">Suma de (abonos + total con interés) o (total con IVA)</p>
+          </CardContent>
+        </Card>
+         <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Clientes Activos</CardTitle>
+            <UsersIconLucide className="h-5 w-5 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{clients.length}</div>
+            <p className="text-xs text-muted-foreground">Número total de clientes registrados</p>
+          </CardContent>
+        </Card>
       </div>
 
+      {/* Charts Section */}
+      <div className="grid gap-6 md:grid-cols-1 lg:grid-cols-2 mb-8">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><BarChart3 className="h-5 w-5" />Proyección de Recaudos Mensuales</CardTitle>
+            <CardDescription>Estimación de las próximas cuotas a recaudar en los siguientes 6 meses.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {monthlyRevenueData.length > 0 ? (
+              <MonthlyRevenueChart data={monthlyRevenueData} />
+            ) : (
+              <p className="text-muted-foreground text-center py-8">No hay datos suficientes para generar este gráfico.</p>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><LineChart className="h-5 w-5" />Curva de Crecimiento de Clientes</CardTitle>
+            <CardDescription>Número de clientes nuevos registrados por mes en los últimos 6 meses.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {clientGrowthData.length > 0 ? (
+              <ClientGrowthChart data={clientGrowthData} />
+            ) : (
+              <p className="text-muted-foreground text-center py-8">No hay datos suficientes para generar este gráfico.</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+      <Card className="mb-8">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><PieChartIcon className="h-5 w-5" />Distribución de Clientes por Plan de Financiación</CardTitle>
+            <CardDescription>Cómo se distribuyen los clientes entre los diferentes planes de financiación.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex justify-center">
+            {financingPlanDistributionData.length > 0 ? (
+              <FinancingPlanDistributionChart data={financingPlanDistributionData} />
+            ) : (
+              <p className="text-muted-foreground text-center py-8">No hay datos suficientes para generar este gráfico.</p>
+            )}
+          </CardContent>
+        </Card>
+      
+      {/* Quick Actions or Links */}
       <Card>
         <CardHeader>
-          <CardTitle>Lista de Clientes</CardTitle>
-          <CardDescription>
-            Una lista de todos los clientes registrados, su información de pago y detalles de financiación.
-          </CardDescription>
+            <CardTitle>Acciones Rápidas</CardTitle>
         </CardHeader>
-        <CardContent>
-          {clients.length === 0 && !isLoading ? (
-            <div className="text-center py-10">
-              <UsersIconLucide className="mx-auto h-12 w-12 text-muted-foreground" />
-              <h3 className="mt-2 text-sm font-medium text-foreground">No se encontraron clientes</h3>
-              <p className="mt-1 text-sm text-muted-foreground">Comience agregando un nuevo cliente.</p>
-              <div className="mt-6">
-                <Button asChild>
-                  <Link href="/clients/new">
-                    <PlusCircle className="mr-2 h-4 w-4" /> Agregar Nuevo Cliente
-                  </Link>
-                </Button>
-              </div>
-            </div>
-          ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Nombre Completo</TableHead>
-                <TableHead className="hidden md:table-cell">Correo Electrónico</TableHead>
-                <TableHead className="text-right">Cuota Mensual</TableHead>
-                <TableHead className="hidden sm:table-cell">Plan Financiación</TableHead>
-                <TableHead className="hidden lg:table-cell">Documentos</TableHead>
-                <TableHead className="hidden sm:table-cell">Próximo Pago</TableHead>
-                <TableHead className="hidden sm:table-cell text-center">Estado</TableHead>
-                <TableHead className="text-right">Acciones</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {clients.map((client: Client) => (
-                <TableRow key={client.id}>
-                  <TableCell>
-                    <div className="font-medium">{client.firstName} {client.lastName}</div>
-                    <div className="text-xs text-muted-foreground md:hidden">{client.email}</div>
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell">{client.email}</TableCell>
-                  <TableCell className="text-right">
-                    {client.paymentAmount > 0 ? formatCurrency(client.paymentAmount) : <span className="text-muted-foreground">-</span>}
-                  </TableCell>
-                  <TableCell className="hidden sm:table-cell">
-                    {client.financingPlan && client.financingPlan !== 0 && FINANCING_OPTIONS[client.financingPlan]
-                      ? FINANCING_OPTIONS[client.financingPlan].label
-                      : client.contractValue && client.contractValue > 0 ? <span className="text-muted-foreground">Pago único</span> : <span className="text-muted-foreground">N/A</span>}
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell">
-                    <div className="flex flex-col gap-1 text-xs">
-                      {client.acceptanceLetterUrl && (
-                        <a href={client.acceptanceLetterUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-1">
-                          <LinkIcon size={12} /> Carta Acept.
-                        </a>
-                      )}
-                      {client.contractFileUrl && (
-                         <a href={client.contractFileUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-1">
-                          <LinkIcon size={12} /> Contrato
-                        </a>
-                      )}
-                       {(!client.acceptanceLetterUrl && !client.contractFileUrl) && <span className="text-muted-foreground">-</span>}
-                    </div>
-                  </TableCell>
-                  <TableCell className="hidden sm:table-cell">{formatDate(client.nextPaymentDate)}</TableCell>
-                  <TableCell className="hidden sm:table-cell text-center">
-                    {client.paymentAmount > 0 ? getPaymentStatusBadge(client.nextPaymentDate) : <Badge variant="outline">Completado</Badge>}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex gap-2 justify-end">
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button variant="outline" size="icon" asChild>
-                              <Link href={`/clients/${client.id}/edit`}>
-                                <Edit3 className="h-4 w-4" />
-                                 <span className="sr-only">Editar Cliente</span>
-                              </Link>
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>Editar Cliente</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                      {client.paymentAmount > 0 && <SendReminderButton client={client} />}
-                      <DeleteClientDialog clientId={client.id} clientName={`${client.firstName} ${client.lastName}`} />
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          )}
+        <CardContent className="flex gap-4">
+            <Button asChild>
+              <Link href="/clients">
+                <UsersIconLucide className="mr-2 h-4 w-4" /> Ver Lista de Clientes
+              </Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link href="/clients/new">
+                <PlusCircle className="mr-2 h-4 w-4" /> Agregar Nuevo Cliente
+              </Link>
+            </Button>
         </CardContent>
-         {clients.length > 0 && (
-          <CardFooter className="text-xs text-muted-foreground">
-            Mostrando <strong>{clients.length}</strong> cliente(s).
-          </CardFooter>
-        )}
       </Card>
+
     </AppLayout>
   );
 }

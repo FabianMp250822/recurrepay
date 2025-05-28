@@ -3,14 +3,15 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Users, LogOut, CreditCard } from 'lucide-react';
+import { LayoutDashboard, Users, LogOut, CreditCard, BarChart3 } from 'lucide-react'; // Added BarChart3 for Analytics
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/contexts/AuthContext';
 
 const navItems = [
-  { href: '/dashboard', label: 'Panel Principal', icon: LayoutDashboard },
+  { href: '/dashboard', label: 'Panel de Analíticas', icon: BarChart3 }, // Changed from LayoutDashboard
+  { href: '/clients', label: 'Clientes', icon: Users }, // New link for client list
   { href: '/clients/new', label: 'Agregar Cliente', icon: Users },
 ];
 
@@ -31,24 +32,38 @@ export function AppSidebar() {
         </Link>
       </div>
       <nav className="flex-1 overflow-y-auto p-4 space-y-1">
-        {navItems.map((item) => (
-          <Button
-            key={item.href}
-            variant={pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href)) ? 'secondary' : 'ghost'}
-            className={cn(
-              "w-full justify-start",
-              (pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href)))
-                ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-            )}
-            asChild
-          >
-            <Link href={item.href}>
-              <item.icon className="mr-3 h-5 w-5" />
-              {item.label}
-            </Link>
-          </Button>
-        ))}
+        {navItems.map((item) => {
+          // Determine if the item is active. For /clients, also check if pathname starts with /clients/
+          // to keep it active for /clients/new and /clients/[id]/edit
+          const isActive = item.href === '/clients' 
+            ? pathname.startsWith('/clients') 
+            : pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href) && item.href !== '/clients/new');
+
+          // Special handling for 'Agregar Cliente' to avoid it being active when viewing '/clients' list
+          if (item.href === '/clients/new' && pathname === '/clients') {
+             // isActive should be false for 'Agregar Cliente' if we are on '/clients' list
+          }
+
+
+          return (
+            <Button
+              key={item.href}
+              variant={isActive ? 'secondary' : 'ghost'}
+              className={cn(
+                "w-full justify-start",
+                isActive
+                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                  : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              )}
+              asChild
+            >
+              <Link href={item.href}>
+                <item.icon className="mr-3 h-5 w-5" />
+                {item.label}
+              </Link>
+            </Button>
+          );
+        })}
       </nav>
       <div className="mt-auto p-4 border-t border-sidebar-border">
         <div className="flex items-center gap-3">
