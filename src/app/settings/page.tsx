@@ -1,19 +1,21 @@
 
+'use client'; // Ensure this is at the very top
+
+import React, { useState, useEffect } from 'react';
 import AppLayout from '@/components/layout/app-layout';
 import { fetchFinancingSettingsAction } from '@/app/actions/settingsActions';
 import { FinancingSettingsForm } from '@/components/settings/FinancingSettingsForm';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import type { AppFinancingSettings } from '@/types';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Terminal } from 'lucide-react';
-import { Button } from '@/components/ui/button'; // Importar Button
-import { testMercadoPagoPreferenceCreation } from '@/app/actions/mercadopagoTestActions'; // Importar la acción de prueba
-import { useToast } from '@/hooks/use-toast'; // Para mostrar notificaciones
+import { Terminal, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { testMercadoPagoPreferenceCreation } from '@/app/actions/mercadopagoTestActions';
+import { useToast } from '@/hooks/use-toast';
 
-// Componente wrapper para usar hooks de cliente como useToast
+// TestMercadoPagoButton remains a client component, which is correct
 function TestMercadoPagoButton() {
-  'use client'; // Marcar este componente como de cliente
-  const { toast } = useToast();
+  const { toast } = useToast(); // This is now fine as SettingsPage will be a client component
 
   const handleTestMercadoPago = async () => {
     toast({ title: "Iniciando prueba de Mercado Pago...", description: "Revisa la consola del servidor para el resultado." });
@@ -40,17 +42,27 @@ function TestMercadoPagoButton() {
   );
 }
 
+export default function SettingsPage() { // Removed 'async'
+  const [financingSettings, setFinancingSettings] = useState<AppFinancingSettings | null>(null);
+  const [errorLoadingSettings, setErrorLoadingSettings] = useState<string | null>(null);
+  const [isLoadingSettings, setIsLoadingSettings] = useState(true);
 
-export default async function SettingsPage() {
-  let financingSettings: AppFinancingSettings | null = null;
-  let errorLoadingSettings: string | null = null;
-
-  try {
-    financingSettings = await fetchFinancingSettingsAction();
-  } catch (error) {
-    console.error("Error fetching settings for SettingsPage:", error);
-    errorLoadingSettings = error instanceof Error ? error.message : "Ocurrió un error desconocido al cargar la configuración.";
-  }
+  useEffect(() => {
+    async function loadSettings() {
+      setIsLoadingSettings(true);
+      setErrorLoadingSettings(null);
+      try {
+        const settings = await fetchFinancingSettingsAction();
+        setFinancingSettings(settings);
+      } catch (error) {
+        console.error("Error fetching settings for SettingsPage:", error);
+        setErrorLoadingSettings(error instanceof Error ? error.message : "Ocurrió un error desconocido al cargar la configuración.");
+      } finally {
+        setIsLoadingSettings(false);
+      }
+    }
+    loadSettings();
+  }, []);
 
   return (
     <AppLayout>
@@ -64,7 +76,14 @@ export default async function SettingsPage() {
           </CardHeader>
         </Card>
 
-        {errorLoadingSettings && (
+        {isLoadingSettings && (
+          <div className="flex items-center justify-center py-10">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="ml-2 text-muted-foreground">Cargando configuración...</p>
+          </div>
+        )}
+
+        {errorLoadingSettings && !isLoadingSettings && (
           <Alert variant="destructive">
             <Terminal className="h-4 w-4" />
             <AlertTitle>Error al Cargar Configuración</AlertTitle>
@@ -72,11 +91,9 @@ export default async function SettingsPage() {
           </Alert>
         )}
 
-        {financingSettings && (
+        {!isLoadingSettings && financingSettings && (
           <FinancingSettingsForm currentSettings={financingSettings} />
         )}
-        
-        {/* Aquí se pueden añadir más tarjetas de configuración en el futuro */}
         
         <Card>
           <CardHeader>
