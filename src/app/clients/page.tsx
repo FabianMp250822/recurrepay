@@ -23,11 +23,11 @@ import {
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import AppLayout from '@/components/layout/app-layout';
-import { getClients, getFinancingOptionsMap } from '@/lib/store'; // Ensured getFinancingOptionsMap is imported
+import { getClients, getFinancingOptionsMap, getGeneralSettings } from '@/lib/store'; // Ensured getFinancingOptionsMap and getGeneralSettings is imported
 import { formatDate, formatCurrency, getDaysUntilDue, cleanPhoneNumberForWhatsApp } from '@/lib/utils';
 import DeleteClientDialog from '@/components/clients/delete-client-dialog';
 import RegisterPaymentButton from '@/components/clients/RegisterPaymentButton'; 
-import type { Client } from '@/types';
+import type { Client, AppGeneralSettings } from '@/types'; // Added AppGeneralSettings
 import {
   Tooltip,
   TooltipContent,
@@ -46,7 +46,8 @@ export default function ClientsListPage() {
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const { user, isAdmin, initialLoadComplete } = useAuth();
-  const [financingOptions, setFinancingOptions] = useState<FinancingOptionsMap>({}); // State for financing options
+  const [financingOptions, setFinancingOptions] = useState<FinancingOptionsMap>({});
+  const [appName, setAppName] = useState('RecurPay'); // Default App Name
 
   const fetchClientsAndOptions = useCallback(async () => {
     if (!initialLoadComplete || !isAdmin) {
@@ -59,12 +60,16 @@ export default function ClientsListPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const [fetchedClients, finOptions] = await Promise.all([
+      const [fetchedClients, finOptions, generalSettings] = await Promise.all([ // Added generalSettings fetch
         getClients(),
-        getFinancingOptionsMap() // Fetch financing options
+        getFinancingOptionsMap(),
+        getGeneralSettings() 
       ]);
       setClients(fetchedClients);
-      setFinancingOptions(finOptions); // Store financing options in state
+      setFinancingOptions(finOptions);
+      if (generalSettings && generalSettings.appName) { // Set appName from settings
+        setAppName(generalSettings.appName);
+      }
     } catch (err: any) {
       console.error("Error fetching data on clients list page. AuthContext state: ", { userUid: user?.uid, isAdminContext: isAdmin, initialLoadCompleteContext: initialLoadComplete }, err);
       const detailedError = err.message || 'Error al cargar los datos. Por favor, inténtelo de nuevo.';
@@ -122,23 +127,25 @@ export default function ClientsListPage() {
     if (!cleanedPhoneNumber) return "#"; 
 
     const daysUntilDue = getDaysUntilDue(client.nextPaymentDate);
-    let specificMessagePart = "";
+    const clientFullName = `${client.firstName} ${client.lastName}`;
+    const paymentAmountFormatted = formatCurrency(client.paymentAmount);
+    const nextPaymentDateFormatted = formatDate(client.nextPaymentDate);
+    let message = "";
 
-    if (daysUntilDue < 0) {
-      specificMessagePart = `su pago de ${formatCurrency(client.paymentAmount)} que está VENCIDO.`;
-    } else if (daysUntilDue === 0) {
-      specificMessagePart = `su pago de ${formatCurrency(client.paymentAmount)} que vence HOY.`;
-    } else if (daysUntilDue === 1) {
-      specificMessagePart = `su pago de ${formatCurrency(client.paymentAmount)} que vence MAÑANA.`;
-    } else if (daysUntilDue > 1 && daysUntilDue <= 5) {
-      specificMessagePart = `su pago de ${formatCurrency(client.paymentAmount)} que vence en ${daysUntilDue} días.`;
-    } else if (daysUntilDue > 5) {
-      specificMessagePart = `su próximo pago de ${formatCurrency(client.paymentAmount)} programado para el ${formatDate(client.nextPaymentDate)}.`;
+    if (daysUntilDue > 1 && daysUntilDue <= 5) { // 2 a 5 días antes
+      message = `Hola ${client.firstName}, te escribimos de ${appName} para recordarte amablemente sobre tu próximo pago de ${paymentAmountFormatted} con fecha de vencimiento el ${nextPaymentDateFormatted}. ¡Gracias!`;
+    } else if (daysUntilDue === 1) { // Vence mañana
+      message = `Hola ${client.firstName}, de parte de ${appName}, este es un recordatorio amigable de que tu pago de ${paymentAmountFormatted} vence mañana, ${nextPaymentDateFormatted}. Agradecemos tu atención. ¡Saludos!`;
+    } else if (daysUntilDue === 0) { // Vence hoy
+      message = `Hola ${client.firstName}, esperamos que tengas un excelente día. Te contactamos de ${appName} para recordarte que tu pago de ${paymentAmountFormatted} vence hoy, ${nextPaymentDateFormatted}. Si ya realizaste el pago, puedes ignorar este mensaje. Si tienes alguna consulta, estamos a tu disposición. ¡Gracias!`;
+    } else if (daysUntilDue < 0 && daysUntilDue >= -5) { // Vencido (hasta 5 días)
+      message = `Hola ${client.firstName}, te contactamos de ${appName} en relación a tu pago de ${paymentAmountFormatted} que venció el ${nextPaymentDateFormatted}. Entendemos que pueden surgir imprevistos. Si necesitas asistencia o deseas confirmar tu pago, por favor comunícate con nosotros. ¡Gracias!`;
     } else {
-      specificMessagePart = `su próximo pago de ${formatCurrency(client.paymentAmount)}.`;
+      // Fallback o mensaje para otros casos (ej. >5 días antes, o >5 días vencido si se decide enviar)
+      // Por ahora, el botón solo se activa en el rango -5 a +5, así que este caso no debería darse con la lógica actual del botón.
+      message = `Hola ${client.firstName}, te recordamos de ${appName} sobre tu pago de ${paymentAmountFormatted} programado para el ${nextPaymentDateFormatted}. ¡Saludos!`;
     }
     
-    const message = `Hola ${client.firstName}, le recordamos sobre ${specificMessagePart} Por favor, realice su pago a la brevedad. ¡Gracias!`;
     return `https://wa.me/${cleanedPhoneNumber}?text=${encodeURIComponent(message)}`;
   };
   
@@ -272,7 +279,6 @@ export default function ClientsListPage() {
                 const daysUntilDueClient = getDaysUntilDue(client.nextPaymentDate);
                 const canSendWhatsAppReminder = client.paymentAmount > 0 && client.status !== 'completed' && daysUntilDueClient >= -5 && daysUntilDueClient <= 5;
                 
-                // Use financingOptions from state to get the label
                 const financingPlanLabel = client.financingPlan !== undefined && financingOptions[client.financingPlan] 
                                           ? financingOptions[client.financingPlan].label 
                                           : (client.contractValue && client.contractValue > 0 && client.paymentAmount === 0 ? <span className="text-muted-foreground">Pago único</span> : <span className="text-muted-foreground">N/A</span>);
