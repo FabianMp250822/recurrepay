@@ -1,6 +1,6 @@
 
 'use client';
-import React, { useState } from 'react';
+import React, { useState, useTransition } from 'react';
 import { Button } from '@/components/ui/button';
 import { Mail, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -15,42 +15,42 @@ import {
 
 interface SendReminderButtonProps {
   client: Client;
-  daysUntilDue: number;
+  daysUntilDue: number; // daysUntilDue is now explicitly passed
 }
 
 export default function SendReminderButton({ client, daysUntilDue }: SendReminderButtonProps) {
-  const [isSending, setIsSending] = useState(false);
+  const [isSending, startTransition] = useTransition(); // Use useTransition for pending state
   const { toast } = useToast();
 
   const handleSendReminder = async () => {
-    setIsSending(true);
-    try {
-      const result = await sendPaymentReminderEmailAction(client);
-      if (result.success) {
+    startTransition(async () => {
+      try {
+        const result = await sendPaymentReminderEmailAction(client);
+        if (result.success) {
+          toast({
+            title: 'Recordatorio Enviado',
+            description: result.message || `Correo de recordatorio de pago enviado a ${client.email}.`,
+            variant: 'default',
+          });
+        } else {
+          toast({
+            title: 'Error al Enviar Recordatorio',
+            description: result.error || 'No se pudo enviar el recordatorio de pago.',
+            variant: 'destructive',
+          });
+        }
+      } catch (error) {
+        console.error("Error en SendReminderButton:", error);
         toast({
-          title: 'Recordatorio Enviado',
-          description: result.message || `Correo de recordatorio de pago enviado a ${client.email}.`,
-          variant: 'default',
-        });
-      } else {
-        toast({
-          title: 'Error al Enviar Recordatorio',
-          description: result.error || 'No se pudo enviar el recordatorio de pago.',
+          title: 'Error del Cliente',
+          description: 'Ocurrió un error inesperado al intentar enviar el recordatorio.',
           variant: 'destructive',
         });
       }
-    } catch (error) {
-      console.error("Error en SendReminderButton:", error);
-      toast({
-        title: 'Error del Cliente',
-        description: 'Ocurrió un error inesperado al intentar enviar el recordatorio.',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsSending(false);
-    }
+    });
   };
 
+  // Button is active if within -5 to +5 days due window
   const isReminderPeriodActive = daysUntilDue >= -5 && daysUntilDue <= 5;
   const isDisabled = isSending || !isReminderPeriodActive;
 
@@ -69,7 +69,7 @@ export default function SendReminderButton({ client, daysUntilDue }: SendReminde
           </Button>
         </TooltipTrigger>
         <TooltipContent>
-          {isReminderPeriodActive ? <p>Enviar Recordatorio de Pago</p> : <p>Recordatorio no aplicable en esta fecha</p>}
+          {isReminderPeriodActive ? <p>Enviar Recordatorio por Correo</p> : <p>Recordatorio por correo no aplicable en esta fecha</p>}
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

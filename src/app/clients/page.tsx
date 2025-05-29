@@ -2,7 +2,7 @@
 'use client'; 
 
 import Link from 'next/link';
-import { PlusCircle, Edit3, Users as UsersIconLucide, FileText, DollarSign, Link as LinkIconLucide, Loader2, Terminal, CreditCard as CreditCardIcon, CheckCircle, MessageSquare, Filter } from 'lucide-react';
+import { PlusCircle, Edit3, Users as UsersIconLucide, FileText, DollarSign, Link as LinkIconLucide, Loader2, Terminal, CreditCard as CreditCardIcon, CheckCircle, MessageSquare, Filter, Mail } from 'lucide-react'; // Added Mail
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import {
@@ -27,6 +27,7 @@ import { getClients, getFinancingOptionsMap, getGeneralSettings } from '@/lib/st
 import { formatDate, formatCurrency, getDaysUntilDue, cleanPhoneNumberForWhatsApp } from '@/lib/utils';
 import DeleteClientDialog from '@/components/clients/delete-client-dialog';
 import RegisterPaymentButton from '@/components/clients/RegisterPaymentButton'; 
+import SendReminderButton from '@/components/clients/SendReminderButton'; // Re-added SendReminderButton
 import type { Client, AppGeneralSettings } from '@/types';
 import {
   Tooltip,
@@ -121,7 +122,7 @@ export default function ClientsListPage() {
         if (isCompleted) return false; // No incluir completados en otros filtros
 
         if (paymentStatusFilter === "al_dia") return daysUntil > 7;
-        if (paymentStatusFilter === "vence_pronto") return daysUntil > 0 && daysUntil <= 7;
+        if (paymentStatusFilter === "vence_pronto") return daysUntil >= 0 && daysUntil <= 7; // Ajustado para incluir el día 0 y hasta 7
         if (paymentStatusFilter === "vencido") return daysUntil < 0;
         return true;
       });
@@ -148,13 +149,10 @@ export default function ClientsListPage() {
     if (daysUntil < 0) {
       return <Badge variant="destructive">Vencido</Badge>;
     }
-    if (daysUntil <= 3) { // Ajustar para "Vence Pronto" más amplio
+    if (daysUntil <= 7) { 
       return <Badge className="bg-yellow-500 text-black hover:bg-yellow-600 dark:bg-yellow-600 dark:text-white dark:hover:bg-yellow-700">Vence Pronto</Badge>;
     }
-    if (daysUntil <= 7) { // Este es "Próximo" pero el filtro "Vence Pronto" lo cubre
-      return <Badge variant="secondary">Próximo</Badge>;
-    }
-    return <Badge variant="outline">Al día</Badge>; // Cambiado de "Programado" a "Al día"
+    return <Badge variant="outline">Al día</Badge>;
   }
 
   const generateWhatsAppLink = (client: Client) => {
@@ -162,7 +160,7 @@ export default function ClientsListPage() {
     if (!cleanedPhoneNumber) return "#"; 
 
     const daysUntilDue = getDaysUntilDue(client.nextPaymentDate);
-    const clientFullName = `${client.firstName} ${client.lastName}`;
+    // const clientFullName = `${client.firstName} ${client.lastName}`; // No usado directamente aquí
     const paymentAmountFormatted = formatCurrency(client.paymentAmount);
     const nextPaymentDateFormatted = formatDate(client.nextPaymentDate);
     let message = "";
@@ -175,7 +173,7 @@ export default function ClientsListPage() {
       message = `Hola ${client.firstName}, esperamos que tengas un excelente día. Te contactamos de ${appName} para recordarte que tu pago de ${paymentAmountFormatted} vence hoy, ${nextPaymentDateFormatted}. Si ya realizaste el pago, puedes ignorar este mensaje. Si tienes alguna consulta, estamos a tu disposición. ¡Gracias!`;
     } else if (daysUntilDue < 0 && daysUntilDue >= -5) { 
       message = `Hola ${client.firstName}, te contactamos de ${appName} en relación a tu pago de ${paymentAmountFormatted} que venció el ${nextPaymentDateFormatted}. Entendemos que pueden surgir imprevistos. Si necesitas asistencia o deseas confirmar tu pago, por favor comunícate con nosotros. ¡Gracias!`;
-    } else {
+    } else { // Fallback general para cuando el botón esté activo pero no caiga en las condiciones anteriores (ej. 2-5 días antes)
       message = `Hola ${client.firstName}, te recordamos de ${appName} sobre tu pago de ${paymentAmountFormatted} programado para el ${nextPaymentDateFormatted}. ¡Saludos!`;
     }
     
@@ -266,7 +264,7 @@ export default function ClientsListPage() {
             <div className="flex items-center gap-2">
                 <Filter className="h-4 w-4 text-muted-foreground" />
                 <Select value={paymentStatusFilter} onValueChange={(value) => setPaymentStatusFilter(value as PaymentStatusFilter)}>
-                  <SelectTrigger className="w-full md:w-[180px]">
+                  <SelectTrigger className="w-full md:w-[200px]">
                     <SelectValue placeholder="Estado de Pago" />
                   </SelectTrigger>
                   <SelectContent>
@@ -288,6 +286,7 @@ export default function ClientsListPage() {
                         {option.label}
                       </SelectItem>
                     ))}
+                     <SelectItem value="0">Sin Financiación</SelectItem>
                   </SelectContent>
                 </Select>
             </div>
@@ -343,7 +342,8 @@ export default function ClientsListPage() {
               {filteredClients.map((client: Client) => {
                 const daysUntilDueClient = getDaysUntilDue(client.nextPaymentDate);
                 const canSendWhatsAppReminder = client.paymentAmount > 0 && client.status !== 'completed' && daysUntilDueClient >= -5 && daysUntilDueClient <= 5;
-                
+                const canSendEmailReminder = client.paymentAmount > 0 && client.status !== 'completed'; // SendReminderButton handles its own disable logic based on daysUntilDueClient
+
                 const financingPlanLabel = client.financingPlan !== undefined && financingOptions[client.financingPlan] 
                                           ? financingOptions[client.financingPlan].label 
                                           : (client.contractValue && client.contractValue > 0 && client.paymentAmount === 0 ? <span className="text-muted-foreground">Pago único</span> : <span className="text-muted-foreground">N/A</span>);
@@ -383,6 +383,9 @@ export default function ClientsListPage() {
                   <TableCell className="text-right">
                     <div className="flex gap-1 sm:gap-2 justify-end">
                       {client.paymentAmount > 0 && client.status !== 'completed' && <RegisterPaymentButton client={client} />}
+                      {canSendEmailReminder && (
+                        <SendReminderButton client={client} daysUntilDue={daysUntilDueClient} />
+                      )}
                        {canSendWhatsAppReminder && (
                         <TooltipProvider>
                           <Tooltip>
@@ -433,4 +436,3 @@ export default function ClientsListPage() {
     </AppLayout>
   );
 }
-
