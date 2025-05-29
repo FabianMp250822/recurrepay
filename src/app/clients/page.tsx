@@ -2,7 +2,7 @@
 'use client'; 
 
 import Link from 'next/link';
-import { PlusCircle, Edit3, Users as UsersIconLucide, FileText, DollarSign, Link as LinkIconLucide, Loader2, Terminal, CreditCard as CreditCardIcon, CheckCircle, MessageSquare } from 'lucide-react';
+import { PlusCircle, Edit3, Users as UsersIconLucide, FileText, DollarSign, Link as LinkIconLucide, Loader2, Terminal, CreditCard as CreditCardIcon, CheckCircle, MessageSquare, Filter } from 'lucide-react';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import {
@@ -23,11 +23,11 @@ import {
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import AppLayout from '@/components/layout/app-layout';
-import { getClients, getFinancingOptionsMap, getGeneralSettings } from '@/lib/store'; // Ensured getFinancingOptionsMap and getGeneralSettings is imported
+import { getClients, getFinancingOptionsMap, getGeneralSettings } from '@/lib/store';
 import { formatDate, formatCurrency, getDaysUntilDue, cleanPhoneNumberForWhatsApp } from '@/lib/utils';
 import DeleteClientDialog from '@/components/clients/delete-client-dialog';
 import RegisterPaymentButton from '@/components/clients/RegisterPaymentButton'; 
-import type { Client, AppGeneralSettings } from '@/types'; // Added AppGeneralSettings
+import type { Client, AppGeneralSettings } from '@/types';
 import {
   Tooltip,
   TooltipContent,
@@ -36,9 +36,12 @@ import {
 } from "@/components/ui/tooltip";
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useAuth } from '@/contexts/AuthContext';
-import { Input } from '@/components/ui/input'; // For search
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 type FinancingOptionsMap = { [key: number]: { rate: number; label: string } };
+
+type PaymentStatusFilter = "todos" | "al_dia" | "vence_pronto" | "vencido" | "completado";
 
 export default function ClientsListPage() {
   const [clients, setClients] = useState<Client[]>([]);
@@ -47,7 +50,11 @@ export default function ClientsListPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const { user, isAdmin, initialLoadComplete } = useAuth();
   const [financingOptions, setFinancingOptions] = useState<FinancingOptionsMap>({});
-  const [appName, setAppName] = useState('RecurPay'); // Default App Name
+  const [appName, setAppName] = useState('RecurPay');
+
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState<PaymentStatusFilter>("todos");
+  const [financingPlanFilter, setFinancingPlanFilter] = useState<string>("todos");
+
 
   const fetchClientsAndOptions = useCallback(async () => {
     if (!initialLoadComplete || !isAdmin) {
@@ -60,14 +67,14 @@ export default function ClientsListPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const [fetchedClients, finOptions, generalSettings] = await Promise.all([ // Added generalSettings fetch
+      const [fetchedClients, finOptions, generalSettings] = await Promise.all([
         getClients(),
         getFinancingOptionsMap(),
         getGeneralSettings() 
       ]);
       setClients(fetchedClients);
       setFinancingOptions(finOptions);
-      if (generalSettings && generalSettings.appName) { // Set appName from settings
+      if (generalSettings && generalSettings.appName) {
         setAppName(generalSettings.appName);
       }
     } catch (err: any) {
@@ -92,18 +99,46 @@ export default function ClientsListPage() {
   }, [initialLoadComplete, isAdmin, fetchClientsAndOptions]);
 
   const filteredClients = useMemo(() => {
-    if (!searchTerm) return clients;
-    const lowerSearchTerm = searchTerm.toLowerCase();
-    return clients.filter(client => 
-      client.firstName.toLowerCase().includes(lowerSearchTerm) ||
-      client.lastName.toLowerCase().includes(lowerSearchTerm) ||
-      client.email.toLowerCase().includes(lowerSearchTerm)
-    );
-  }, [clients, searchTerm]);
+    let CriterioBusquedalients = clients;
+
+    // Filtrar por término de búsqueda
+    if (searchTerm) {
+      const lowerSearchTerm = searchTerm.toLowerCase();
+      CriterioBusquedalients = CriterioBusquedalients.filter(client => 
+        client.firstName.toLowerCase().includes(lowerSearchTerm) ||
+        client.lastName.toLowerCase().includes(lowerSearchTerm) ||
+        client.email.toLowerCase().includes(lowerSearchTerm)
+      );
+    }
+
+    // Filtrar por estado de pago
+    if (paymentStatusFilter !== "todos") {
+      CriterioBusquedalients = CriterioBusquedalients.filter(client => {
+        const daysUntil = getDaysUntilDue(client.nextPaymentDate);
+        const isCompleted = client.status === 'completed' || (client.paymentAmount === 0 && client.status !== 'active');
+
+        if (paymentStatusFilter === "completado") return isCompleted;
+        if (isCompleted) return false; // No incluir completados en otros filtros
+
+        if (paymentStatusFilter === "al_dia") return daysUntil > 7;
+        if (paymentStatusFilter === "vence_pronto") return daysUntil > 0 && daysUntil <= 7;
+        if (paymentStatusFilter === "vencido") return daysUntil < 0;
+        return true;
+      });
+    }
+
+    // Filtrar por plan de financiación
+    if (financingPlanFilter !== "todos") {
+      const planKey = parseInt(financingPlanFilter, 10);
+      CriterioBusquedalients = CriterioBusquedalients.filter(client => client.financingPlan === planKey);
+    }
+
+    return CriterioBusquedalients;
+  }, [clients, searchTerm, paymentStatusFilter, financingPlanFilter]);
 
 
   function getPaymentStatusBadge(client: Client): React.ReactElement {
-    if (client.status === 'completed' || (client.paymentAmount === 0 && client.contractValue && client.contractValue > 0)) {
+    if (client.status === 'completed' || (client.paymentAmount === 0 && client.contractValue && client.contractValue > 0 && client.status !== 'active')) {
       return <Badge variant="default" className="bg-green-600 hover:bg-green-700">Completado</Badge>;
     }
     if (client.paymentAmount === 0 && (!client.contractValue || client.contractValue === 0)) {
@@ -113,13 +148,13 @@ export default function ClientsListPage() {
     if (daysUntil < 0) {
       return <Badge variant="destructive">Vencido</Badge>;
     }
-    if (daysUntil <= 3) {
+    if (daysUntil <= 3) { // Ajustar para "Vence Pronto" más amplio
       return <Badge className="bg-yellow-500 text-black hover:bg-yellow-600 dark:bg-yellow-600 dark:text-white dark:hover:bg-yellow-700">Vence Pronto</Badge>;
     }
-    if (daysUntil <= 7) {
+    if (daysUntil <= 7) { // Este es "Próximo" pero el filtro "Vence Pronto" lo cubre
       return <Badge variant="secondary">Próximo</Badge>;
     }
-    return <Badge variant="outline">Programado</Badge>;
+    return <Badge variant="outline">Al día</Badge>; // Cambiado de "Programado" a "Al día"
   }
 
   const generateWhatsAppLink = (client: Client) => {
@@ -132,17 +167,15 @@ export default function ClientsListPage() {
     const nextPaymentDateFormatted = formatDate(client.nextPaymentDate);
     let message = "";
 
-    if (daysUntilDue > 1 && daysUntilDue <= 5) { // 2 a 5 días antes
+    if (daysUntilDue > 1 && daysUntilDue <= 5) { 
       message = `Hola ${client.firstName}, te escribimos de ${appName} para recordarte amablemente sobre tu próximo pago de ${paymentAmountFormatted} con fecha de vencimiento el ${nextPaymentDateFormatted}. ¡Gracias!`;
-    } else if (daysUntilDue === 1) { // Vence mañana
+    } else if (daysUntilDue === 1) { 
       message = `Hola ${client.firstName}, de parte de ${appName}, este es un recordatorio amigable de que tu pago de ${paymentAmountFormatted} vence mañana, ${nextPaymentDateFormatted}. Agradecemos tu atención. ¡Saludos!`;
-    } else if (daysUntilDue === 0) { // Vence hoy
+    } else if (daysUntilDue === 0) { 
       message = `Hola ${client.firstName}, esperamos que tengas un excelente día. Te contactamos de ${appName} para recordarte que tu pago de ${paymentAmountFormatted} vence hoy, ${nextPaymentDateFormatted}. Si ya realizaste el pago, puedes ignorar este mensaje. Si tienes alguna consulta, estamos a tu disposición. ¡Gracias!`;
-    } else if (daysUntilDue < 0 && daysUntilDue >= -5) { // Vencido (hasta 5 días)
+    } else if (daysUntilDue < 0 && daysUntilDue >= -5) { 
       message = `Hola ${client.firstName}, te contactamos de ${appName} en relación a tu pago de ${paymentAmountFormatted} que venció el ${nextPaymentDateFormatted}. Entendemos que pueden surgir imprevistos. Si necesitas asistencia o deseas confirmar tu pago, por favor comunícate con nosotros. ¡Gracias!`;
     } else {
-      // Fallback o mensaje para otros casos (ej. >5 días antes, o >5 días vencido si se decide enviar)
-      // Por ahora, el botón solo se activa en el rango -5 a +5, así que este caso no debería darse con la lógica actual del botón.
       message = `Hola ${client.firstName}, te recordamos de ${appName} sobre tu pago de ${paymentAmountFormatted} programado para el ${nextPaymentDateFormatted}. ¡Saludos!`;
     }
     
@@ -221,15 +254,43 @@ export default function ClientsListPage() {
         <CardHeader>
           <CardTitle>Clientes Registrados</CardTitle>
           <CardDescription>
-            Busque y administre los clientes, su información de pago y detalles de financiación.
+            Busque, filtre y administre los clientes, su información de pago y detalles de financiación.
           </CardDescription>
-           <div className="mt-4">
+           <div className="mt-4 space-y-4 md:space-y-0 md:flex md:items-center md:gap-4">
             <Input 
               placeholder="Buscar por nombre, apellido o correo..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="max-w-sm"
+              className="max-w-sm md:flex-grow"
             />
+            <div className="flex items-center gap-2">
+                <Filter className="h-4 w-4 text-muted-foreground" />
+                <Select value={paymentStatusFilter} onValueChange={(value) => setPaymentStatusFilter(value as PaymentStatusFilter)}>
+                  <SelectTrigger className="w-full md:w-[180px]">
+                    <SelectValue placeholder="Estado de Pago" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Todos los Estados</SelectItem>
+                    <SelectItem value="al_dia">Al día</SelectItem>
+                    <SelectItem value="vence_pronto">Vence Pronto (≤7 días)</SelectItem>
+                    <SelectItem value="vencido">Vencido</SelectItem>
+                    <SelectItem value="completado">Completado</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={financingPlanFilter} onValueChange={(value) => setFinancingPlanFilter(value)}>
+                  <SelectTrigger className="w-full md:w-[220px]">
+                    <SelectValue placeholder="Plan de Financiación" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Todos los Planes</SelectItem>
+                    {Object.entries(financingOptions).map(([key, option]) => (
+                      <SelectItem key={key} value={key}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -237,11 +298,15 @@ export default function ClientsListPage() {
             <div className="text-center py-10">
               <UsersIconLucide className="mx-auto h-12 w-12 text-muted-foreground" />
               <h3 className="mt-2 text-sm font-medium text-foreground">
-                {searchTerm ? 'No se encontraron clientes con ese criterio.' : 'No se encontraron clientes'}
+                {searchTerm || paymentStatusFilter !== "todos" || financingPlanFilter !== "todos"
+                  ? 'No se encontraron clientes con los criterios seleccionados.' 
+                  : 'No se encontraron clientes'}
               </h3>
               <p className="mt-1 text-sm text-muted-foreground">
-                {searchTerm ? 'Intente con otra búsqueda o ' : 'Comience agregando un nuevo cliente.'}
-                {!searchTerm && (
+                {searchTerm || paymentStatusFilter !== "todos" || financingPlanFilter !== "todos"
+                  ? 'Intente con otra búsqueda o ajuste los filtros. ' 
+                  : 'Comience agregando un nuevo cliente. '}
+                {!(searchTerm || paymentStatusFilter !== "todos" || financingPlanFilter !== "todos") && (
                     <Button variant="link" asChild className="p-0 h-auto">
                         <Link href="/clients/new">
                             agregue uno nuevo
@@ -250,7 +315,7 @@ export default function ClientsListPage() {
                 )}
                 .
               </p>
-              {!searchTerm && (
+              {!(searchTerm || paymentStatusFilter !== "todos" || financingPlanFilter !== "todos") && (
                 <div className="mt-6">
                     <Button asChild>
                     <Link href="/clients/new">
@@ -368,3 +433,4 @@ export default function ClientsListPage() {
     </AppLayout>
   );
 }
+
