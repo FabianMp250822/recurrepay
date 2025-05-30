@@ -4,7 +4,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import Image from 'next/image';
-import { LayoutDashboard, Users, LogOut, CreditCard, BarChart3, SettingsIcon, Loader2 } from 'lucide-react';
+import { Users, LogOut, CreditCard, BarChart3, SettingsIcon, Loader2, Link as LinkIconLucide } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -13,25 +13,28 @@ import React, { useEffect, useState } from 'react';
 import { fetchGeneralSettingsAction } from '@/app/actions/settingsActions';
 import type { AppGeneralSettings } from '@/types';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useToast } from '@/hooks/use-toast';
 
 
-const navItems = [
+const mainNavItems = [
   { href: '/dashboard', label: 'Panel de Analíticas', icon: BarChart3 },
   { href: '/clients', label: 'Clientes', icon: Users },
-  { href: '/clients/new', label: 'Agregar Cliente', icon: Users }, // Consider if this should be a sub-item or less prominent
-  { href: '/settings', label: 'Configuración', icon: SettingsIcon },
+  // { href: '/clients/new', label: 'Agregar Cliente', icon: Users },
 ];
+
+const settingsNavItem = { href: '/settings', label: 'Configuración', icon: SettingsIcon };
 
 export function AppSidebar() {
   const pathname = usePathname();
   const { user, isAdmin, logout, initialLoadComplete } = useAuth();
-  const [appName, setAppName] = useState('RecurPay'); // Default
+  const [appName, setAppName] = useState('RecurPay');
   const [appLogoUrl, setAppLogoUrl] = useState<string | null>(null);
   const [isLoadingSettings, setIsLoadingSettings] = useState(true);
+  const { toast } = useToast();
 
   useEffect(() => {
     async function loadGeneralSettings() {
-      if (initialLoadComplete && isAdmin && user) { // Ensure user is admin before fetching
+      if (initialLoadComplete && isAdmin && user) {
         setIsLoadingSettings(true);
         try {
           const settings: AppGeneralSettings = await fetchGeneralSettingsAction();
@@ -46,18 +49,39 @@ export function AppSidebar() {
         } finally {
           setIsLoadingSettings(false);
         }
-      } else if (initialLoadComplete) { // Auth is complete, but user is not admin or not logged in
-        setAppName('RecurPay'); 
+      } else if (initialLoadComplete) {
+        setAppName('RecurPay');
         setAppLogoUrl(null);
-        setIsLoadingSettings(false); 
+        setIsLoadingSettings(false);
       }
     }
     loadGeneralSettings();
   }, [isAdmin, user, initialLoadComplete]);
 
+  const handleSendLinkFormClick = () => {
+    if (typeof window !== "undefined") {
+      const registrationLink = `${window.location.origin}/inscribir`;
+      navigator.clipboard.writeText(registrationLink)
+        .then(() => {
+          toast({
+            title: "Enlace Copiado",
+            description: "El enlace de auto-inscripción de cliente ha sido copiado al portapapeles. Puede compartirlo por WhatsApp o correo.",
+          });
+        })
+        .catch(err => {
+          console.error("Error al copiar el enlace: ", err);
+          toast({
+            title: "Error al Copiar",
+            description: "No se pudo copiar el enlace. Puede copiarlo manualmente: " + registrationLink,
+            variant: "destructive",
+            duration: 7000,
+          });
+        });
+    }
+  };
 
   if (!initialLoadComplete || !isAdmin || !user) {
-    return null; 
+    return null;
   }
 
   return (
@@ -70,8 +94,7 @@ export function AppSidebar() {
               <Skeleton className="h-5 w-24 bg-sidebar-accent/50" />
             </>
           ) : appLogoUrl ? (
-            <Image src={appLogoUrl} alt="Logo de la Aplicación" width={32} height={32} className="h-8 w-auto max-w-[180px] object-contain" unoptimized />
-            // No appName text if logo exists
+            <Image src={appLogoUrl} alt={appName} width={120} height={32} className="h-8 w-auto max-w-[180px] object-contain" unoptimized />
           ) : (
             <>
               <CreditCard className="h-6 w-6 text-primary" />
@@ -81,13 +104,8 @@ export function AppSidebar() {
         </Link>
       </div>
       <nav className="flex-1 overflow-y-auto p-4 space-y-1">
-        {navItems.map((item) => {
-          // Hide "Agregar Cliente" from main nav if it's better suited as a button on /clients page
-          if (item.href === '/clients/new' && pathname !== '/clients/new') {
-             // return null; // Option to hide it from general nav
-          }
+        {mainNavItems.map((item) => {
           const isActive = pathname.startsWith(item.href) && (item.href !== '/' || pathname === '/');
-          
           return (
             <Button
               key={item.href}
@@ -107,6 +125,38 @@ export function AppSidebar() {
             </Button>
           );
         })}
+
+        {/* Botón para Enviar Link de Inscripción */}
+        <Button
+          variant={'ghost'}
+          className={cn(
+            "w-full justify-start",
+            "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          )}
+          onClick={handleSendLinkFormClick}
+        >
+          <LinkIconLucide className="mr-3 h-5 w-5" />
+          Enviar Link Inscripción
+        </Button>
+
+        {/* Enlace de Configuración */}
+        <Button
+          key={settingsNavItem.href}
+          variant={pathname.startsWith(settingsNavItem.href) ? 'secondary' : 'ghost'}
+          className={cn(
+            "w-full justify-start",
+            pathname.startsWith(settingsNavItem.href)
+              ? "bg-sidebar-accent text-sidebar-accent-foreground"
+              : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          )}
+          asChild
+        >
+          <Link href={settingsNavItem.href}>
+            <settingsNavItem.icon className="mr-3 h-5 w-5" />
+            {settingsNavItem.label}
+          </Link>
+        </Button>
+
       </nav>
       <div className="mt-auto p-4 border-t border-sidebar-border">
         <div className="flex items-center gap-3">
