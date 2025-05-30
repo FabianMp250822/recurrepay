@@ -13,6 +13,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Link as LinkIcon } from 'lucide-react'; // Import Link icon
 
 interface PaymentHistoryListProps {
   paymentHistory: PaymentRecord[];
@@ -31,7 +32,7 @@ export function PaymentHistoryList({ paymentHistory }: PaymentHistoryListProps) 
             <TableHead>Fecha de Pago</TableHead>
             <TableHead className="text-right">Monto Pagado</TableHead>
             <TableHead className="hidden sm:table-cell">Registrado el</TableHead>
-            {/* <TableHead>Notas</TableHead> */}
+            <TableHead>Factura Siigo</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -42,7 +43,21 @@ export function PaymentHistoryList({ paymentHistory }: PaymentHistoryListProps) 
               <TableCell className="hidden sm:table-cell text-xs text-muted-foreground">
                 {formatDate(payment.recordedAt)}
               </TableCell>
-              {/* <TableCell>{payment.notes || '-'}</TableCell> */}
+              <TableCell>
+                {payment.siigoInvoiceUrl ? (
+                  <a
+                    href={payment.siigoInvoiceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-primary hover:underline"
+                  >
+                    <LinkIcon size={14} />
+                    Ver Factura
+                  </a>
+                ) : (
+                  <span className="text-xs text-muted-foreground">-</span>
+                )}
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>

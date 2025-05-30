@@ -9,8 +9,8 @@ import * as store from '@/lib/store';
 import type { Client, ClientFormData, PaymentRecord, AppGeneralSettings } from '@/types';
 import { formatCurrency, formatDate, calculateNextPaymentDate as calculateNextRegPaymentDateUtil, getDaysUntilDue } from '@/lib/utils';
 import { IVA_RATE } from '@/lib/constants';
-import { addMonths, setDate, getDate, getDaysInMonth } from 'date-fns';
-import { getGeneralSettings } from '@/lib/store'; 
+import { addMonths, setDate, getDate, getDaysInMonth, parseISO } from 'date-fns';
+import { getGeneralSettings, getFinancingOptionsMap } from '@/lib/store'; 
 
 const CONTRACT_VALUE_THRESHOLD = 1000000;
 const MIN_DOWN_PAYMENT_PERCENTAGE_LARGE_CONTRACT = 20;
@@ -18,22 +18,20 @@ const MIN_DOWN_PAYMENT_PERCENTAGE_LARGE_CONTRACT = 20;
 // Helper function to calculate financing details
 async function calculateFinancingDetails(formData: ClientFormData): Promise<Partial<Client>> {
   let contractValue = formData.contractValue || 0;
-  let applyIva = formData.applyIva === undefined ? true : formData.applyIva; // Default to true if not provided
+  let applyIva = formData.applyIva === undefined ? true : formData.applyIva;
   let downPaymentPercentage = formData.downPaymentPercentage || 0;
   let financingPlanKey = formData.financingPlan || 0;
 
-  // Apply business rules for contracts < 1M
   if (contractValue < CONTRACT_VALUE_THRESHOLD && contractValue > 0) {
-    financingPlanKey = 0; // No financing
-    downPaymentPercentage = 0; // No down payment
+    financingPlanKey = 0; 
+    downPaymentPercentage = 0;
   } else if (contractValue >= CONTRACT_VALUE_THRESHOLD) {
-    if (downPaymentPercentage !==0 && downPaymentPercentage < MIN_DOWN_PAYMENT_PERCENTAGE_LARGE_CONTRACT) {
-      // This should ideally be caught by Zod schema, but as a safeguard in calculation:
-      // For calculation, we proceed with the provided value, Zod handles validation error.
+    if (downPaymentPercentage !== 0 && downPaymentPercentage < MIN_DOWN_PAYMENT_PERCENTAGE_LARGE_CONTRACT) {
+      // Zod handles validation error.
     }
   }
 
-  const financingOptionsFromDb = await store.getFinancingOptionsMap();
+  const financingOptionsFromDb = await getFinancingOptionsMap();
 
   const details: Partial<Client> = {
     contractValue,
@@ -73,19 +71,17 @@ async function calculateFinancingDetails(formData: ClientFormData): Promise<Part
     details.amountToFinance = Math.max(0, details.totalWithIva - details.downPayment);
 
     if (contractValue < CONTRACT_VALUE_THRESHOLD) {
-      // For contracts < 1M, payment is total contract value (with or without IVA) upfront
       calculatedPaymentAmount = details.totalWithIva;
       details.financingPlan = 0; 
       details.downPaymentPercentage = 0; 
       details.downPayment = 0;
       details.amountToFinance = details.totalWithIva; 
       if (calculatedPaymentAmount === 0 && details.totalWithIva > 0) {
-         // This case should not happen if totalWithIva > 0, unless it's an error in logic.
-         // If totalWithIva is 0 (e.g. free contract), then status could be completed.
+         // This case should not happen if totalWithIva > 0
       } else if (calculatedPaymentAmount === 0 && details.totalWithIva === 0) {
          details.status = 'completed';
       }
-    } else if (financingPlanKey !== 0 && details.amountToFinance > 0) { // Contract >= 1M WITH financing
+    } else if (financingPlanKey !== 0 && details.amountToFinance > 0) {
       const planInfo = financingOptionsFromDb[financingPlanKey];
       if (planInfo) {
         details.financingInterestRateApplied = planInfo.rate;
@@ -94,26 +90,24 @@ async function calculateFinancingDetails(formData: ClientFormData): Promise<Part
         const numberOfMonths = financingPlanKey;
         calculatedPaymentAmount = numberOfMonths > 0 ? parseFloat((details.totalAmountWithInterest / numberOfMonths).toFixed(2)) : 0;
       }
-    } else if (details.amountToFinance === 0 && financingPlanKey !== 0) { // Paid in full by down payment (for contracts >= 1M with a financing plan selected but fully covered)
+    } else if (details.amountToFinance === 0 && financingPlanKey !== 0) { 
       calculatedPaymentAmount = 0; 
       details.status = 'completed';
-    } else if (financingPlanKey === 0) { // No financing plan (for contracts >= 1M or no contract value)
-        // If contract >= 1M and no financing
-        if (details.amountToFinance === 0 && contractValue > 0) { // Contract fully paid by down payment
+    } else if (financingPlanKey === 0) { 
+        if (details.amountToFinance === 0 && contractValue > 0) { 
              calculatedPaymentAmount = 0;
              details.status = 'completed';
         } else {
-             calculatedPaymentAmount = formData.paymentAmount || details.amountToFinance; // If no DP or partial DP, this is the remainder or the user-set service fee.
+             calculatedPaymentAmount = formData.paymentAmount || details.amountToFinance; 
              if(calculatedPaymentAmount === 0 && contractValue > 0 && details.amountToFinance > 0) {
-                // This might be an invalid state based on Zod; if paymentAmount is 0 but there's amountToFinance.
-                // For calculation, we proceed. Zod should catch if paymentAmount is required to be > 0.
+                // Invalid state based on Zod.
              }
         }
     }
-  } else { // No contract value (e.g. simple recurring service)
+  } else { 
     details.downPayment = 0; 
-    calculatedPaymentAmount = formData.paymentAmount || 0; // Must be > 0 as per Zod if no contract
-    if (calculatedPaymentAmount === 0) { // Should be caught by Zod if no contract
+    calculatedPaymentAmount = formData.paymentAmount || 0; 
+    if (calculatedPaymentAmount === 0) { 
         details.status = 'completed'; 
     }
   }
@@ -173,14 +167,21 @@ export async function updateClientAction(id: string, formData: ClientFormData) {
     ...validatedData,
     ...financingDetails,
     paymentAmount: financingDetails.paymentAmount!,
-    // Preserve existing nextPaymentDate and paymentsMadeCount unless specifically recalculated
     nextPaymentDate: existingClient.nextPaymentDate, 
     paymentsMadeCount: existingClient.paymentsMadeCount, 
     status: financingDetails.status === 'completed' ? 'completed' : (existingClient.status || 'active'),
   };
 
   if (validatedData.paymentDayOfMonth !== existingClient.paymentDayOfMonth) {
-    clientToUpdate.nextPaymentDate = calculateNextRegPaymentDateUtil(validatedData.paymentDayOfMonth).toISOString();
+    let currentNextPaymentDate = parseISO(existingClient.nextPaymentDate);
+    if (currentNextPaymentDate < new Date()) { // If past, calculate from today
+        currentNextPaymentDate = calculateNextRegPaymentDateUtil(validatedData.paymentDayOfMonth);
+    } else { // If in future, adjust day but keep month/year if possible
+        const targetDay = validatedData.paymentDayOfMonth;
+        const daysInMonth = getDaysInMonth(currentNextPaymentDate);
+        currentNextPaymentDate = setDate(currentNextPaymentDate, Math.min(targetDay, daysInMonth));
+    }
+    clientToUpdate.nextPaymentDate = currentNextPaymentDate.toISOString();
   }
 
 
@@ -208,7 +209,7 @@ export async function deleteClientAction(id: string) {
   return { success: true };
 }
 
-export async function registerPaymentAction(clientId: string) {
+export async function registerPaymentAction(clientId: string, siigoInvoiceUrl?: string) {
   const client = await store.getClientById(clientId);
   if (!client) {
     return { success: false, error: "Cliente no encontrado." };
@@ -220,7 +221,7 @@ export async function registerPaymentAction(clientId: string) {
   if (client.paymentAmount === 0 && client.contractValue && client.contractValue < CONTRACT_VALUE_THRESHOLD) {
      return { success: false, error: "Este contrato de pago único ya ha sido completado." };
   }
-   if (client.paymentAmount === 0 && client.status !== 'completed' ) { // General case if payment amount is 0 but not completed
+   if (client.paymentAmount === 0 && client.status !== 'completed' ) { 
      return { success: false, error: "Este cliente no tiene un monto de pago configurado o es 0." };
   }
 
@@ -231,6 +232,7 @@ export async function registerPaymentAction(clientId: string) {
   const paymentRecord: Omit<PaymentRecord, 'id' | 'recordedAt'> = {
     paymentDate: paymentDate,
     amountPaid: paymentAmountRecorded,
+    siigoInvoiceUrl: siigoInvoiceUrl || undefined,
   };
 
   const historyResult = await store.addPaymentToHistory(clientId, paymentRecord);
@@ -239,25 +241,23 @@ export async function registerPaymentAction(clientId: string) {
   }
 
   let newPaymentsMadeCount = (client.paymentsMadeCount || 0) + 1;
-  let newNextPaymentDate = new Date(client.nextPaymentDate);
+  let newNextPaymentDate = parseISO(client.nextPaymentDate);
   
   const updates: Partial<Client> = {
     paymentsMadeCount: newPaymentsMadeCount,
   };
 
   if (client.contractValue && client.contractValue < CONTRACT_VALUE_THRESHOLD) {
-    // For single payment contracts < 1M, registering payment means it's completed.
     updates.status = 'completed';
     updates.paymentAmount = 0; 
   } else {
-    // For recurring payments or financing installments
     newNextPaymentDate = addMonths(newNextPaymentDate, 1);
     const targetDay = client.paymentDayOfMonth;
     const daysInNewMonth = getDaysInMonth(newNextPaymentDate);
     newNextPaymentDate = setDate(newNextPaymentDate, Math.min(targetDay, daysInNewMonth));
     updates.nextPaymentDate = newNextPaymentDate.toISOString();
 
-    const financingOptionsFromDb = await store.getFinancingOptionsMap();
+    const financingOptionsFromDb = await getFinancingOptionsMap();
     if (client.financingPlan && client.financingPlan > 0 && financingOptionsFromDb[client.financingPlan] && newPaymentsMadeCount >= client.financingPlan) {
       updates.paymentAmount = 0; 
       updates.status = 'completed';
@@ -280,7 +280,8 @@ export async function registerPaymentAction(clientId: string) {
 export async function sendPaymentReminderEmailAction(client: Client) {
   const settings = await getGeneralSettings();
   const appName = settings.appName || 'RecurPay';
-  const emailFromConfig = settings.appName ? `${settings.appName} <${process.env.EMAIL_SERVER_USER}>` : `RecurPay <${process.env.EMAIL_SERVER_USER}>`;
+  const fromUser = process.env.EMAIL_SERVER_USER;
+  const emailFromConfig = fromUser ? `${appName} <${fromUser}>` : `${appName}`;
 
 
   const {
@@ -307,7 +308,7 @@ export async function sendPaymentReminderEmailAction(client: Client) {
   
   let subject = `Recordatorio Importante - ${appName}`;
   const daysUntilDue = getDaysUntilDue(client.nextPaymentDate);
-  const financingOptionsFromDb = await store.getFinancingOptionsMap();
+  const financingOptionsFromDb = await getFinancingOptionsMap();
 
   if (client.paymentAmount > 0) {
     if (daysUntilDue < -5) { 
@@ -318,9 +319,9 @@ export async function sendPaymentReminderEmailAction(client: Client) {
       subject = `¡Importante (${appName})! Tu pago de ${formatCurrency(client.paymentAmount)} para ${client.firstName} vence HOY`;
     } else if (daysUntilDue === 1) { 
       subject = `¡Atención (${appName})! Tu pago de ${formatCurrency(client.paymentAmount)} para ${client.firstName} vence MAÑANA`;
-    } else if (daysUntilDue <= 7) { 
+    } else if (daysUntilDue <= 7) { // Changed from <= 5 to <= 7 for a wider "pronto" window
       subject = `Recordatorio (${appName}): Tu pago de ${formatCurrency(client.paymentAmount)} para ${client.firstName} vence pronto`;
-    } else { 
+    } else { // More than 7 days away
       subject = `Recordatorio Amistoso (${appName}): Próximo Pago para ${client.firstName}`;
     }
   }
@@ -336,15 +337,15 @@ export async function sendPaymentReminderEmailAction(client: Client) {
         <p>Estimado/a ${client.firstName} ${client.lastName},</p>
         <p>Este es un recordatorio amigable sobre ${paymentAmountText} programado para el <strong>${formatDate(client.nextPaymentDate)}</strong>.</p>
         
-        ${client.contractValue && client.contractValue > 0 && client.financingPlan && client.financingPlan > 0 ? `
+        ${client.contractValue && client.contractValue > 0 && client.financingPlan !== undefined && client.financingPlan >= 0 ? `
         <p><strong>Detalles de su financiación:</strong></p>
         <ul>
           <li>Valor del Contrato: ${formatCurrency(client.contractValue)} ${client.applyIva === false ? "(Exento de IVA)" : ""}</li>
           ${client.applyIva !== false && client.ivaAmount ? `<li>IVA (${(client.ivaRate || 0) * 100}%): ${formatCurrency(client.ivaAmount)}</li>` : ""}
-          ${client.applyIva !== false && client.totalWithIva ? `<li>Total con IVA: ${formatCurrency(client.totalWithIva)}</li>` : ""}
+          ${client.applyIva !== false && client.totalWithIva ? `<li>Total ${client.applyIva === false ? 'Contrato' : 'con IVA'}: ${formatCurrency(client.totalWithIva)}</li>` : ""}
           ${client.downPaymentPercentage && client.downPayment ? `<li>Abono (${client.downPaymentPercentage}%): ${formatCurrency(client.downPayment)}</li>` : ''}
-          <li>Plan: ${financingOptionsFromDb[client.financingPlan]?.label || `${client.financingPlan} meses`}</li>
-          <li>Cuota Mensual: ${formatCurrency(client.paymentAmount)}</li>
+          <li>Plan: ${financingOptionsFromDb[client.financingPlan]?.label || (client.financingPlan === 0 ? 'Sin financiación (Pago único/recurrente directo)' : `${client.financingPlan} meses`)}</li>
+          ${client.paymentAmount > 0 ? `<li>Cuota Mensual: ${formatCurrency(client.paymentAmount)}</li>` : '<li>(Pago completado o monto cero)</li>'}
         </ul>
         ` : client.paymentAmount > 0 ? `
         <p><strong>Detalles del Pago Recurrente:</strong></p>
@@ -386,4 +387,3 @@ export async function sendPaymentReminderEmailAction(client: Client) {
     return { success: false, error: errorMessage };
   }
 }
-

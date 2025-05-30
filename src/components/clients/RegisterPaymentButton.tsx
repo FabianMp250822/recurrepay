@@ -3,7 +3,7 @@
 
 import React, { useState, useTransition } from 'react';
 import { Button } from '@/components/ui/button';
-import { CheckCircle, Loader2 } from 'lucide-react';
+import { CheckCircle, Loader2, Link as LinkIcon } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { registerPaymentAction } from '@/app/actions/clientActions';
 import type { Client } from '@/types';
@@ -24,6 +24,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { formatCurrency } from '@/lib/utils';
 
 interface RegisterPaymentButtonProps {
@@ -34,11 +36,12 @@ export default function RegisterPaymentButton({ client }: RegisterPaymentButtonP
   const [isProcessing, startTransition] = useTransition();
   const { toast } = useToast();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [siigoInvoiceUrl, setSiigoInvoiceUrl] = useState('');
 
   const handleRegisterPayment = async () => {
     startTransition(async () => {
       try {
-        const result = await registerPaymentAction(client.id);
+        const result = await registerPaymentAction(client.id, siigoInvoiceUrl.trim() || undefined);
         if (result.success) {
           toast({
             title: 'Pago Registrado',
@@ -61,12 +64,13 @@ export default function RegisterPaymentButton({ client }: RegisterPaymentButtonP
         });
       } finally {
         setIsDialogOpen(false);
+        setSiigoInvoiceUrl(''); // Reset for next time
       }
     });
   };
 
   if (client.status === 'completed' || client.paymentAmount === 0) {
-    return null; // Do not show button if payments are completed
+    return null;
   }
 
   return (
@@ -99,8 +103,27 @@ export default function RegisterPaymentButton({ client }: RegisterPaymentButtonP
             Esta acción actualizará la próxima fecha de pago y el historial del cliente.
           </AlertDialogDescription>
         </AlertDialogHeader>
+        <div className="space-y-4 py-4">
+          <div className="space-y-2">
+            <Label htmlFor="siigoInvoiceUrl">Enlace Factura Siigo (Opcional)</Label>
+            <div className="flex items-center space-x-2">
+              <LinkIcon className="h-5 w-5 text-muted-foreground" />
+              <Input
+                id="siigoInvoiceUrl"
+                type="url"
+                placeholder="https://enlace.a.factura.siigo.com/..."
+                value={siigoInvoiceUrl}
+                onChange={(e) => setSiigoInvoiceUrl(e.target.value)}
+                disabled={isProcessing}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Si este pago tiene una factura electrónica en Siigo, pegue el enlace aquí.
+            </p>
+          </div>
+        </div>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isProcessing}>Cancelar</AlertDialogCancel>
+          <AlertDialogCancel disabled={isProcessing} onClick={() => setSiigoInvoiceUrl('')}>Cancelar</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleRegisterPayment}
             disabled={isProcessing}

@@ -11,6 +11,7 @@ export interface PaymentRecord {
   recordedAt: string; // ISO string - Timestamp of when the record was created in the system
   paymentMethod?: string; // Optional: Method used for this specific payment
   notes?: string; // Optional: Any notes for this specific payment
+  siigoInvoiceUrl?: string; // Optional: Link to the Siigo e-invoice
 }
 
 export interface Client {
@@ -21,7 +22,7 @@ export interface Client {
   phoneNumber: string;
 
   contractValue?: number;
-  applyIva?: boolean; // New field
+  applyIva?: boolean; 
   ivaRate?: number; 
   ivaAmount?: number; 
   totalWithIva?: number; 
@@ -58,7 +59,7 @@ export type ClientFormData = {
   email: string;
   phoneNumber: string;
   contractValue?: number;
-  applyIva?: boolean; // New field
+  applyIva?: boolean;
   downPaymentPercentage?: number; 
   paymentMethod?: string;
   financingPlan?: number; 
@@ -74,7 +75,13 @@ export type ClientFormData = {
   contractFileName?: string;
 };
 
-export type PublicClientFormData = z.infer<typeof publicClientSchema>;
+export type PublicClientFormData = z.infer<typeof publicClientSchema> & {
+  email: string; // Email is added here after user registration step
+  acceptanceLetterUrl?: string;
+  acceptanceLetterFileName?: string;
+  contractFileUrl?: string;
+  contractFileName?: string;
+};
 
 
 export type AppUser = FirebaseUser;
@@ -113,3 +120,4 @@ export type AppGeneralSettingsFormData = {
   themeBackground?: string;
   themeForeground?: string;
 };
+

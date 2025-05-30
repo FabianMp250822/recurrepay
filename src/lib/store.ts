@@ -15,8 +15,7 @@ import {
   Timestamp,
   setDoc
 } from 'firebase/firestore';
-// DEFAULT_FINANCING_OPTIONS from constants.ts is an object, not directly used for this default structure anymore
-// We define the default AppFinancingSettings structure directly here.
+import { DEFAULT_FINANCING_OPTIONS } from '@/lib/constants'; // For default structure
 
 const CLIENTS_COLLECTION = 'listapagospendiendes';
 const PAYMENT_HISTORY_SUBCOLLECTION = 'paymentHistory';
@@ -32,7 +31,7 @@ const defaultFinancingPlansData: AppFinancingSettings = {
     { months: 6, label: "6 meses", rate: 0.08, isConfigurable: true },
     { months: 9, label: "9 meses", rate: 0.10, isConfigurable: true },
     { months: 12, label: "12 meses", rate: 0.12, isConfigurable: true },
-  ].sort((a, b) => a.months - b.months), // Ensure sorted
+  ].sort((a, b) => a.months - b.months),
 };
 
 
@@ -206,12 +205,16 @@ export async function addPaymentToHistory(clientId: string, paymentData: Omit<Pa
   }
   try {
     const historyCollectionRef = collection(db, CLIENTS_COLLECTION, clientId, PAYMENT_HISTORY_SUBCOLLECTION);
-    const dataToSave = {
-      ...paymentData,
+    const dataToSave: Partial<Omit<PaymentRecord, 'id'>> = { // Use Partial to allow siigoInvoiceUrl to be undefined
+      paymentDate: paymentData.paymentDate,
+      amountPaid: paymentData.amountPaid,
       recordedAt: Timestamp.now().toDate().toISOString(),
     };
+    if (paymentData.siigoInvoiceUrl) {
+      dataToSave.siigoInvoiceUrl = paymentData.siigoInvoiceUrl;
+    }
     const docRef = await addDoc(historyCollectionRef, dataToSave);
-    return { record: { id: docRef.id, ...dataToSave } };
+    return { record: { id: docRef.id, ...dataToSave } as PaymentRecord };
   } catch (error: any) {
     console.error(`Error adding payment to history for client ${clientId} (Client SDK):`, JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     let userMessage = "Error al registrar el pago en el historial.";
@@ -258,44 +261,44 @@ export async function getFinancingPlanSettings(): Promise<AppFinancingSettings> 
     const settingsDocRef = doc(db, APP_SETTINGS_COLLECTION, FINANCING_PLANS_DOC_ID);
     const docSnap = await getDoc(settingsDocRef);
     if (docSnap.exists()) {
-      const dataFromDb = docSnap.data() as Partial<AppFinancingSettings>; // Data from DB might be partial or malformed
+      const dataFromDb = docSnap.data() as Partial<AppFinancingSettings>;
       
-      // Ensure dataFromDb.plans is an array before trying to use array methods on it
       const dbPlansArray = Array.isArray(dataFromDb.plans) ? dataFromDb.plans : [];
 
-      // Create a map of default plans for easy lookup and merging
-      const defaultPlansMap = defaultFinancingPlansData.plans.reduce((map, plan) => {
+      const defaultPlansMap = (defaultFinancingPlansData.plans || []).reduce((map, plan) => {
         map[plan.months] = plan;
         return map;
       }, {} as { [key: number]: FinancingPlanSetting });
 
-      // Merge DB plans with defaults: prioritize DB values but ensure all default structure is there
-      const mergedPlans = defaultFinancingPlansData.plans.map(defaultPlan => {
+      let mergedPlans = (defaultFinancingPlansData.plans || []).map(defaultPlan => {
         const dbPlan = dbPlansArray.find(p => p.months === defaultPlan.months);
         return {
-          ...defaultPlan, // Start with default structure (months, label, default rate, isConfigurable, isDefault)
-          ...(dbPlan || {}), // Override with DB values if they exist (label, rate primarily)
+          ...defaultPlan,
+          ...(dbPlan || {}), 
         };
       });
       
-      // Add any plans from DB that weren't in the defaults (e.g., custom plans added later)
-      // This part is tricky if DB plans don't have all fields, ensure they are valid FinancingPlanSetting
       dbPlansArray.forEach(dbPlan => {
         if (!mergedPlans.find(p => p.months === dbPlan.months)) {
-          // Ensure it has the basic structure, using defaults from a similar default plan if possible
-          // or some sane values if it's a completely new month key
           const baseForNewLabel = defaultPlansMap[dbPlan.months] || { months: dbPlan.months, label: `Plan ${dbPlan.months}m`, rate: 0, isConfigurable: true };
           mergedPlans.push({
              ...baseForNewLabel,
-             ...dbPlan, // Override with what's in DB
+             ...dbPlan,
           });
         }
       });
+      
+      // Filter out any plans that might not be complete or valid (e.g., missing 'months')
+      // and ensure isConfigurable and isDefault are booleans
+      mergedPlans = mergedPlans.filter(p => typeof p.months === 'number').map(p => ({
+        ...p,
+        isDefault: typeof p.isDefault === 'boolean' ? p.isDefault : false,
+        isConfigurable: typeof p.isConfigurable === 'boolean' ? p.isConfigurable : (p.months !== 0), // Sin financiación is not configurable
+      }));
 
       mergedPlans.sort((a, b) => a.months - b.months);
       return { plans: mergedPlans };
     } else {
-      // If doc doesn't exist, create it with defaultFinancingPlansData (which has a 'plans' array)
       await setDoc(settingsDocRef, defaultFinancingPlansData);
       return defaultFinancingPlansData;
     }
@@ -305,7 +308,7 @@ export async function getFinancingPlanSettings(): Promise<AppFinancingSettings> 
       throw new Error("Permiso denegado por Firestore al obtener la configuración de planes de financiación.");
     }
     console.warn("Falling back to default financing plans due to error.");
-    return defaultFinancingPlansData; // This has a 'plans' array
+    return defaultFinancingPlansData;
   }
 }
 
@@ -316,7 +319,6 @@ export async function saveFinancingPlanSettings(settings: AppFinancingSettings):
   }
   try {
     const settingsDocRef = doc(db, APP_SETTINGS_COLLECTION, FINANCING_PLANS_DOC_ID);
-    // Ensure settings.plans is an array before saving
     const dataToSave = {
         plans: Array.isArray(settings.plans) ? settings.plans : defaultFinancingPlansData.plans
     };
@@ -334,13 +336,15 @@ export async function saveFinancingPlanSettings(settings: AppFinancingSettings):
 
 export async function getFinancingOptionsMap(): Promise<{ [key: number]: { rate: number; label: string } }> {
     const settings = await getFinancingPlanSettings();
-    // Ensure settings and settings.plans are valid before reducing
     if (!settings || !Array.isArray(settings.plans) || settings.plans.length === 0) {
-        console.warn("getFinancingOptionsMap: No valid plans found or settings.plans is not an array, returning empty map.");
-        return {};
+        console.warn("getFinancingOptionsMap: No valid plans found or settings.plans is not an array, returning empty map from DEFAULT_FINANCING_OPTIONS.");
+        // Fallback to constants if DB fetch is problematic or empty
+        return Object.entries(DEFAULT_FINANCING_OPTIONS).reduce((acc, [key, value]) => {
+            acc[Number(key)] = value;
+            return acc;
+        }, {} as { [key: number]: { rate: number; label: string } });
     }
     return settings.plans.reduce((acc, plan) => {
-      // Ensure plan is an object and has months, rate, label
       if (plan && typeof plan.months === 'number' && typeof plan.rate === 'number' && typeof plan.label === 'string') {
         acc[plan.months] = { rate: plan.rate, label: plan.label };
       } else {
@@ -356,11 +360,11 @@ const defaultGeneralSettings: AppGeneralSettings = {
   appName: "RecurPay",
   appLogoUrl: "",
   notificationsEnabled: false,
-  themePrimary: "207 88% 68%",
-  themeSecondary: "207 88% 88%",
-  themeAccent: "124 39% 64%",
-  themeBackground: "207 88% 94%",
-  themeForeground: "210 40% 25%",
+  themePrimary: "207 88% 68%", // RecurPay: Serene blue #64B5F6
+  themeSecondary: "207 88% 88%", // Lighter blue
+  themeAccent: "124 39% 64%", // RecurPay: Gentle green #81C784
+  themeBackground: "207 88% 94%", // RecurPay: Light, desaturated blue #E3F2FD
+  themeForeground: "210 40% 25%", // RecurPay: Dark blue/gray for text
 };
 
 export async function getGeneralSettings(): Promise<AppGeneralSettings> {
