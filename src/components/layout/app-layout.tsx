@@ -1,4 +1,3 @@
-
 'use client';
 import React from 'react';
 import { AppSidebar } from './sidebar';
@@ -7,41 +6,39 @@ import { useAuth } from '@/contexts/AuthContext';
 import { usePathname, useRouter } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 
+const PUBLIC_PATHS = ['/login', '/inscribir'];
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, isAdmin, loading, initialLoadComplete } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
 
+  // Si la ruta actual es pública, renderizar solo el contenido sin el layout de admin ni chequeos de auth aquí.
+  // AuthContext manejará redirecciones DESDE estas páginas si el usuario YA está logueado como admin.
+  if (PUBLIC_PATHS.includes(pathname)) {
+    return <>{children}</>;
+  }
+
+  // Para rutas no públicas, realizar chequeos de autenticación y admin.
   React.useEffect(() => {
-    // Si la carga inicial de autenticación ha terminado,
-    // Y (no hay usuario O el usuario no es admin),
-    // Y no estamos en /login NI en /inscribir,
-    // entonces redirigir a /login.
-    if (initialLoadComplete && (!user || !isAdmin) && pathname !== '/login' && pathname !== '/inscribir') {
+    // Solo redirigir si la carga inicial ha completado Y (no hay usuario O no es admin)
+    // Y no estamos ya en una ruta pública (aunque este useEffect ya no debería correr para esas).
+    if (initialLoadComplete && (!user || !isAdmin) && !PUBLIC_PATHS.includes(pathname)) {
       router.replace('/login');
     }
   }, [user, isAdmin, initialLoadComplete, pathname, router]);
 
-  if (!initialLoadComplete || loading) {
-    // Mostrar un spinner de carga para todo el layout si el estado de autenticación aún se está cargando,
-    // a menos que esté en la página de login o inscripción, que tienen sus propios cargadores o no necesitan este.
-    if (pathname !== '/login' && pathname !== '/inscribir') {
-        return (
-        <div className="flex items-center justify-center min-h-screen bg-background">
-            <Loader2 className="h-12 w-12 animate-spin text-primary" />
-        </div>
-        );
-    }
+  // Si aún está cargando la info de auth y no es una ruta pública, mostrar loader.
+  if ((!initialLoadComplete || loading) && !PUBLIC_PATHS.includes(pathname)) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-background">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    );
   }
   
-  // Si está en la página de login o inscripción, renderizar solo el contenido de esas páginas
-  // sin el AppLayout (sidebar/header de admin).
-  if (pathname === '/login' || pathname === '/inscribir') {
-    return <>{children}</>;
-  }
-
-  // Si el usuario está autenticado como admin, renderizar el layout completo de la aplicación.
-  if (user && isAdmin) {
+  // Si es una ruta protegida y el usuario es admin, renderizar el layout completo.
+  if (user && isAdmin && !PUBLIC_PATHS.includes(pathname)) {
     return (
       <div className="flex min-h-screen w-full flex-col bg-muted/40">
         <AppSidebar />
@@ -55,13 +52,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // Fallback para casos límite o mientras se redirige, si no es login o inscribir
-  if (pathname !== '/login' && pathname !== '/inscribir') {
-      return (
-        <div className="flex items-center justify-center min-h-screen bg-background">
-            <Loader2 className="h-12 w-12 animate-spin text-primary" />
-        </div>
-        );
+  // Fallback para rutas no públicas si el usuario no es admin o no está autenticado.
+  // El useEffect ya debería haber redirigido, pero esto es una salvaguarda.
+  if (!PUBLIC_PATHS.includes(pathname)) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-background">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        <p className="ml-2 text-muted-foreground">Redirigiendo...</p>
+      </div>
+    );
   }
-  return null; // Debería ser redirigido o mostrar el contenido de login/inscribir
+  
+  return null; // No debería llegar aquí si la lógica es correcta para rutas públicas.
 }

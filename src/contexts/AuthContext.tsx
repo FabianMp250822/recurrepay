@@ -22,6 +22,8 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const PUBLIC_PATHS = ['/login', '/inscribir']; // Definir rutas públicas aquí también
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
@@ -42,15 +44,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const adminDocSnap = await getDoc(adminDocRef);
           if (adminDocSnap.exists() && adminDocSnap.data().activo === true) {
             setIsAdmin(true);
-            if (pathname === '/login') {
+            // Si el admin está logueado y está en /login o /inscribir, redirigir al dashboard.
+            // AppLayout ya no maneja esta redirección para PUBLIC_PATHS, así que AuthContext puede hacerlo.
+            if (PUBLIC_PATHS.includes(pathname)) {
               router.replace('/dashboard');
             }
           } else {
             setIsAdmin(false);
             await signOut(auth); 
             setUser(null);
-            setAuthError("Acceso denegado. No es un administrador autorizado.");
-            if (pathname !== '/login') {
+            setAuthError("Acceso denegado. No es un administrador autorizado o activo.");
+            // Si no es admin y no está en una ruta pública, redirigir a login
+            if (!PUBLIC_PATHS.includes(pathname)) {
                  router.replace('/login');
             }
           }
@@ -60,14 +65,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           await signOut(auth);
           setUser(null);
           setAuthError("Error al verificar privilegios de administrador.");
-          if (pathname !== '/login') {
+          if (!PUBLIC_PATHS.includes(pathname)) {
             router.replace('/login');
           }
         }
-      } else {
+      } else { // firebaseUser es null (no autenticado)
         setUser(null);
         setIsAdmin(false);
-         if (pathname !== '/login') {
+        // Si no está autenticado y NO está en una ruta pública, redirigir a login.
+         if (!PUBLIC_PATHS.includes(pathname)) {
            router.replace('/login');
          }
       }
@@ -76,13 +82,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     return () => unsubscribe();
-  }, [router, pathname]);
+  // Quitamos pathname de las dependencias aquí para evitar bucles si router.replace se llama mucho.
+  // La lógica de redirección basada en pathname ya está dentro del callback.
+  }, [router]); 
 
   const login = async (email: string, pass: string) => {
     setLoading(true);
     setAuthError(null);
     try {
       await signInWithEmailAndPassword(auth, email, pass);
+      // La redirección después del login la manejará el useEffect de onAuthStateChanged
     } catch (error: any) {
       console.error("Error de inicio de sesión:", error);
       let message = "Error al iniciar sesión. Por favor, verifique sus credenciales.";
@@ -105,7 +114,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await signOut(auth);
       setUser(null);
       setIsAdmin(false);
-      router.replace('/login');
+      router.replace('/login'); // Siempre redirigir a login al cerrar sesión
     } catch (error) {
       console.error("Error al cerrar sesión:", error);
       setAuthError("Error al cerrar sesión. Por favor, inténtelo de nuevo.");
@@ -114,7 +123,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  if (!initialLoadComplete && (pathname !== '/login')) {
+  // Loader global mientras initialLoadComplete es false y no estamos en una página pública.
+  // Las páginas públicas (/login, /inscribir) renderizarán su propio contenido sin este loader global.
+  if (!initialLoadComplete && !PUBLIC_PATHS.includes(pathname)) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
