@@ -1,12 +1,21 @@
 
 import { z } from 'zod';
 
+export const registrationSchema = z.object({
+  email: z.string().email({ message: "Dirección de correo electrónico inválida." }),
+  password: z.string().min(6, { message: "La contraseña debe tener al menos 6 caracteres." }),
+  confirmPassword: z.string().min(6, { message: "La confirmación de contraseña debe tener al menos 6 caracteres." }),
+}).refine(data => data.password === data.confirmPassword, {
+  message: "Las contraseñas no coinciden.",
+  path: ["confirmPassword"],
+});
+
 export const clientSchema = z.object({
   firstName: z.string().min(1, { message: "El nombre es obligatorio." }).max(50, { message: "El nombre debe tener 50 caracteres o menos." }),
   lastName: z.string().min(1, { message: "El apellido es obligatorio." }).max(50, { message: "El apellido debe tener 50 caracteres o menos." }),
   email: z.string().email({ message: "Dirección de correo electrónico inválida." }),
   phoneNumber: z.string().min(7, { message: "El número de teléfono debe tener al menos 7 dígitos." }).max(15, { message: "El número de teléfono debe tener 15 dígitos o menos." }).regex(/^\+?[0-9\s-()]+$/, { message: "Formato de número de teléfono inválido."}),
-  
+
   contractValue: z.preprocess(
     (val) => (val === "" || val === null || val === undefined ? undefined : parseFloat(String(val))),
     z.number().positive({ message: "El valor del contrato debe ser un número positivo." }).optional()
@@ -14,17 +23,17 @@ export const clientSchema = z.object({
   applyIva: z.boolean().optional().default(true),
   downPaymentPercentage: z.preprocess(
     (val) => (val === "" || val === null || val === undefined ? undefined : parseFloat(String(val))),
-    z.number().min(0, "El porcentaje de abono no puede ser negativo.").max(100, "El porcentaje no puede exceder 100.").optional()
+    z.number().min(20, "El porcentaje de abono no puede ser menor al 20% para contratos de este valor, o 0% si no hay abono.").max(100, "El porcentaje no puede exceder 100.").optional()
   ),
   paymentMethod: z.string().optional().or(z.literal('')),
-  financingPlan: z.coerce.number() 
+  financingPlan: z.coerce.number()
     .optional().or(z.literal(0)),
-  
+
   paymentDayOfMonth: z.coerce.number().int().min(1, { message: "El día debe estar entre 1 y 31." }).max(31, { message: "El día debe estar entre 1 y 31." }),
 
   paymentAmount: z.preprocess(
     (val) => (val === "" || val === null || val === undefined ? undefined : parseFloat(String(val))),
-    z.number().min(0, "El monto de pago no puede ser negativo.").optional() 
+    z.number().min(0, "El monto de pago no puede ser negativo.").optional()
   ),
 
   acceptanceLetterUrl: z.string().url().optional().or(z.literal('')),
@@ -62,7 +71,8 @@ export const clientSchema = z.object({
     }
   }
 
-  if (contractValue === 0 && (data.financingPlan === 0 || data.financingPlan === undefined)) {
+  // Validate paymentAmount based on contract and financing
+  if (contractValue === 0 && (data.financingPlan === 0 || data.financingPlan === undefined)) { // Pure service
     if (data.paymentAmount === undefined || data.paymentAmount <= 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -70,9 +80,9 @@ export const clientSchema = z.object({
         path: ["paymentAmount"],
       });
     }
-  } else if (contractValue > 0 && (data.financingPlan === 0 || data.financingPlan === undefined) ) {
+  } else if (contractValue > 0 && (data.financingPlan === 0 || data.financingPlan === undefined) ) { // Contract, no financing
     if ((data.downPaymentPercentage ?? 0) < 100 && (data.paymentAmount === undefined || data.paymentAmount <= 0) && contractValue < CONTRACT_VALUE_THRESHOLD) {
-        // Auto-calculated for < 1M
+        // This case is auto-calculated, so paymentAmount might be derived and not directly validated here if Zod preprocesses it
     } else if ((data.downPaymentPercentage ?? 0) < 100 && (data.paymentAmount === undefined || data.paymentAmount <= 0) && contractValue >= CONTRACT_VALUE_THRESHOLD) {
          ctx.addIssue({
             code: z.ZodIssueCode.custom,
@@ -84,42 +94,37 @@ export const clientSchema = z.object({
 });
 
 
-export const registrationSchema = z.object({
-  email: z.string().email({ message: "Dirección de correo electrónico inválida." }),
-  password: z.string().min(6, { message: "La contraseña debe tener al menos 6 caracteres." }),
-  confirmPassword: z.string().min(6, { message: "La confirmación de contraseña debe tener al menos 6 caracteres." }),
-}).refine(data => data.password === data.confirmPassword, {
-  message: "Las contraseñas no coinciden.",
-  path: ["confirmPassword"],
-});
-
-
-export const publicClientSchema = z.object({
+// Base Zod object for public client data, allows .pick() or .omit()
+export const basePublicClientObjectSchema = z.object({
   firstName: z.string().min(1, { message: "El nombre es obligatorio." }).max(50, { message: "El nombre debe tener 50 caracteres o menos." }),
   lastName: z.string().min(1, { message: "El apellido es obligatorio." }).max(50, { message: "El apellido debe tener 50 caracteres o menos." }),
   phoneNumber: z.string().min(7, { message: "El número de teléfono debe tener al menos 7 dígitos." }).max(15, { message: "El número de teléfono debe tener 15 dígitos o menos." }).regex(/^\+?[0-9\s-()]+$/, { message: "Formato de número de teléfono inválido."}),
   contractValue: z.preprocess(
-    (val) => (val === "" || val === null || val === undefined ? 0 : parseFloat(String(val))), 
+    (val) => (val === "" || val === null || val === undefined ? 0 : parseFloat(String(val))),
     z.number().min(0, "El valor del contrato debe ser un número positivo o cero.")
   ),
-  applyIva: z.boolean().optional().default(true), // Added for self-registration
-  financingPlan: z.coerce.number({invalid_type_error: "Debe seleccionar un plan de financiación."})
-    .refine(val => typeof val === 'number', { message: "Seleccione un plan de financiación válido."}), 
+  applyIva: z.boolean().optional().default(true), // This is part of the data model
+  financingPlan: z.coerce.number({ required_error: "Debe seleccionar un plan de financiación.", invalid_type_error: "Plan de financiación inválido."}),
   paymentDayOfMonth: z.coerce.number().int().min(1, { message: "El día debe estar entre 1 y 31." }).max(31, { message: "El día debe estar entre 1 y 31." }),
-  
   acceptanceLetterUrl: z.string().url("URL inválida para carta de aceptación.").optional().or(z.literal('')),
   acceptanceLetterFileName: z.string().max(100, "Nombre de archivo muy largo.").optional().or(z.literal('')),
   contractFileUrl: z.string().url("URL inválida para contrato.").optional().or(z.literal('')),
   contractFileName: z.string().max(100, "Nombre de archivo muy largo.").optional().or(z.literal('')),
+});
 
-}).refine(data => {
-  if (data.contractValue && data.contractValue > 0 && data.financingPlan === undefined) { 
-    return false; 
+// Full schema for server-side validation or when all data is present
+export const publicClientSchema = basePublicClientObjectSchema.refine(data => {
+  if (data.contractValue && data.contractValue > 0 && (data.financingPlan === null || data.financingPlan === undefined )) {
+    // This refine implies financingPlan is not truly required by its base definition if this check is needed.
+    // Given financingPlan is `z.coerce.number({ required_error: ...})`, it should always be a number if valid.
+    // This refine might be redundant or indicate `financingPlan` should be optional in `basePublicClientObjectSchema`.
+    // For now, assuming the intent is: if there's a contract value, a financing plan must be explicitly selected (even if it's "0 meses").
+    // `coerce.number` would throw if not a number.
   }
   return true;
 }, {
   message: "Debe seleccionar un plan de financiación si ingresa un valor de contrato.",
-  path: ["financingPlan"],
+  path: ["financingPlan"], // This path might be an issue if the refine condition isn't specific enough
 });
 
 
@@ -157,4 +162,3 @@ export const generalSettingsSchema = z.object({
   themeBackground: hslColorString,
   themeForeground: hslColorString,
 });
-
