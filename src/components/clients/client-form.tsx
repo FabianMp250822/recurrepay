@@ -1,4 +1,3 @@
-
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -7,7 +6,7 @@ import type { z } from 'zod';
 import { useRouter } from 'next/navigation';
 import React, { useEffect, useState, useCallback } from 'react';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { storage, auth } from '@/lib/firebase'; // Imported auth
+import { storage, auth } from '@/lib/firebase'; 
 
 import { Button } from '@/components/ui/button';
 import {
@@ -28,8 +27,8 @@ import { clientSchema } from '@/lib/schema';
 import type { Client, ClientFormData } from '@/types';
 import { createClientAction, updateClientAction } from '@/app/actions/clientActions';
 import { Loader2, UploadCloud, FileText, CheckCircle2, XCircle, LinkIcon } from 'lucide-react';
-import { IVA_RATE, PAYMENT_METHODS } from '@/lib/constants'; // Removed FINANCING_OPTIONS
-import { getFinancingOptionsMap } from '@/lib/store'; // Import to fetch options
+import { IVA_RATE, PAYMENT_METHODS } from '@/lib/constants';
+import { getFinancingOptionsMap } from '@/lib/store'; 
 import { formatCurrency } from '@/lib/utils';
 
 type ClientFormProps = {
@@ -42,7 +41,7 @@ type FinancingOptionsMapType = { [key: number]: { rate: number; label: string } 
 type CalculatedValues = {
   ivaAmount: number;
   totalWithIva: number;
-  calculatedDownPayment: number; // Monetary value of down payment
+  calculatedDownPayment: number; 
   amountToFinance: number;
   financingInterestRateApplied: number;
   financingInterestAmount: number;
@@ -74,8 +73,8 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [showFinancingDetails, setShowFinancingDetails] = useState(false);
 
-  const [acceptanceLetterState, setAcceptanceLetterState] = useState<FileUploadState>(initialFileUploadState);
-  const [contractFileState, setContractFileState] = useState<FileUploadState>(initialFileUploadState);
+  const [acceptanceLetterState, setAcceptanceLetterState] = useState<FileUploadState>({...initialFileUploadState, url: client?.acceptanceLetterUrl || null, name: client?.acceptanceLetterFileName || null });
+  const [contractFileState, setContractFileState] = useState<FileUploadState>({...initialFileUploadState, url: client?.contractFileUrl || null, name: client?.contractFileName || null});
   const [financingOptions, setFinancingOptions] = useState<FinancingOptionsMapType>({});
 
   const [calculatedValues, setCalculatedValues] = useState<CalculatedValues>({
@@ -121,7 +120,6 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
           description: "No se pudieron cargar las opciones de financiación. Usando valores por defecto.",
           variant: "destructive",
         });
-        // Fallback or use default constants if needed, though store should handle defaults
       }
     }
     loadFinancingOptions();
@@ -137,7 +135,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
     const financingPlanKey = Number(watchedFinancingPlan);
 
     let cv = isNaN(contractVal) ? 0 : contractVal;
-    let dpPerc = isNaN(downPaymentPerc) ? 0 : downPaymentPerc;
+    let dpPerc = isNaN(downPaymentPerc) ? 0 : dpPerc;
 
     const ivaAmount = cv * IVA_RATE;
     const totalWithIva = cv + ivaAmount;
@@ -176,12 +174,8 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
         totalAmountWithInterest: 0,
         monthlyInstallment: 0,
       });
-      // If not financing, paymentAmount relies on user input (or pre-existing value in edit mode)
-      // if (!isEditMode || !client?.paymentAmount) {
-        // form.setValue('paymentAmount', undefined); // Keep user input if any, or clear if new form
-      // }
     }
-  }, [watchedContractValue, watchedDownPaymentPercentage, watchedFinancingPlan, form, financingOptions, isEditMode, client?.paymentAmount]);
+  }, [watchedContractValue, watchedDownPaymentPercentage, watchedFinancingPlan, form, financingOptions]);
 
 
   const handleFileUpload = useCallback(async (
@@ -191,7 +185,6 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
   ) => {
     if (!file) return;
 
-    // Validate email before proceeding with upload
     const isEmailValid = await form.trigger("email");
     if (!isEmailValid) {
       toast({
@@ -200,7 +193,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
         variant: "destructive",
       });
       setState(prev => ({ ...prev, file: null, isUploading: false, error: "Se requiere correo para la ruta de subida." }));
-      const fileInput = document.getElementById(`${fileType}-file-input`) as HTMLInputElement;
+      const fileInput = document.getElementById(`${fileType}-file-input-admin`) as HTMLInputElement;
       if (fileInput) fileInput.value = "";
       return;
     }
@@ -211,15 +204,14 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
         return;
     }
 
-    console.log(
-      'Attempting file upload. Current Firebase Auth User UID:', auth.currentUser?.uid,
-      'Email:', auth.currentUser?.email
-    );
+    if (!auth.currentUser) {
+      toast({ title: "Error de Autenticación", description: "No hay un administrador autenticado para realizar la subida.", variant: "destructive" });
+      return;
+    }
 
 
     setState(prev => ({ ...prev, isUploading: true, file, progress: 0, error: null }));
     const uniqueFileName = `${fileType}_${Date.now()}_${file.name}`;
-    // Use clientEmail (validated) or a fallback if still somehow empty, though previous checks should prevent this.
     const clientIdentifier = clientEmail.trim() ? clientEmail.trim().replace(/[^a-zA-Z0-9_.-]/g, '_') : 'unknown_client';
     const storagePath = `client_documents/${clientIdentifier}/${uniqueFileName}`;
     const storageRef = ref(storage, storagePath);
@@ -323,7 +315,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
     }
   }
 
-  const renderNumberInput = (name: "contractValue" | "downPaymentPercentage" | "paymentAmount", label: string, placeholder: string, description?: string, isOptional: boolean = true) => (
+  const renderNumberInput = (name: "contractValue" | "downPaymentPercentage" | "paymentAmount", label: string, placeholder: string, description?: string) => (
     <FormField
       control={form.control}
       name={name}
@@ -335,7 +327,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
               type="number"
               step={name === "downPaymentPercentage" ? "1" : "0.01"}
               placeholder={placeholder}
-              value={field.value === undefined || field.value === null || isNaN(Number(field.value)) ? "" : String(field.value)}
+              value={String(field.value ?? "")}
               onChange={e => {
                 const val = e.target.value;
                 if (val === "") {
@@ -360,20 +352,18 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
   
 const FileInputField = ({
     id,
-    name,
-    label,
     fileState,
     onFileChange,
     existingFileUrl,
     existingFileName,
+    label,
   }: {
     id: string;
-    name: 'acceptanceLetterFile' | 'contractFileFile';
-    label: string;
     fileState: FileUploadState;
     onFileChange: (file: File) => void;
     existingFileUrl?: string;
     existingFileName?: string;
+    label: string;
   }) => (
     <FormItem>
       <FormLabel>{label}</FormLabel>
@@ -401,7 +391,7 @@ const FileInputField = ({
       )}
       {fileState.url && !fileState.isUploading && (
         <div className="mt-2 text-sm text-green-600 flex items-center gap-1">
-          <CheckCircle2 size={16} /> ¡{fileState.name} subido con éxito!
+          <CheckCircle2 size={16} /> ¡{fileState.name || (fileState.file ? fileState.file.name : '')} subido con éxito!
         </div>
       )}
       {fileState.error && !fileState.isUploading &&(
@@ -428,7 +418,6 @@ const FileInputField = ({
             <Card>
               <CardHeader><CardTitle className="text-xl">Información Personal</CardTitle></CardHeader>
               <CardContent className="space-y-6">
-                {/* Personal Info Fields */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <FormField control={form.control} name="firstName" render={({ field }) => (<FormItem><FormLabel>Nombres</FormLabel><FormControl><Input placeholder="Juan" {...field} /></FormControl><FormMessage /></FormItem>)} />
                   <FormField control={form.control} name="lastName" render={({ field }) => (<FormItem><FormLabel>Apellidos</FormLabel><FormControl><Input placeholder="Pérez" {...field} /></FormControl><FormMessage /></FormItem>)} />
@@ -488,8 +477,16 @@ const FileInputField = ({
                 <FormField control={form.control} name="paymentDayOfMonth" render={({ field }) => (
                     <FormItem><FormLabel>Día de Pago de la Cuota del Mes</FormLabel>
                         <FormControl><Input type="number" min="1" max="31" placeholder="15" 
-                            value={field.value === undefined || isNaN(Number(field.value)) ? "" : String(field.value)}
-                            onChange={e => field.onChange(e.target.value === "" ? undefined : parseInt(e.target.value, 10))}
+                            value={String(field.value ?? "")}
+                            onChange={e => {
+                              const val = e.target.value;
+                              if (val === "") {
+                                field.onChange(undefined);
+                              } else {
+                                const num = parseInt(val, 10);
+                                field.onChange(isNaN(num) ? undefined : num);
+                              }
+                            }}
                          /></FormControl>
                         <FormDescription>Día (1-31) en que se generará el cobro de la cuota mensual.</FormDescription><FormMessage />
                     </FormItem>)}
@@ -504,22 +501,20 @@ const FileInputField = ({
               <CardHeader><CardTitle className="text-xl">Documentos del Cliente</CardTitle></CardHeader>
               <CardContent className="space-y-6">
                 <FileInputField
-                  id="acceptanceLetter-file-input"
-                  name="acceptanceLetterFile"
+                  id="acceptanceLetter-file-input-admin"
                   label="Carta de Aceptación del Contrato"
                   fileState={acceptanceLetterState}
                   onFileChange={(file) => handleFileUpload(file, 'acceptanceLetter', setAcceptanceLetterState)}
-                  existingFileUrl={form.getValues('acceptanceLetterUrl')}
-                  existingFileName={form.getValues('acceptanceLetterFileName')}
+                  existingFileUrl={client?.acceptanceLetterUrl}
+                  existingFileName={client?.acceptanceLetterFileName}
                 />
                 <FileInputField
-                  id="contractFile-file-input"
-                  name="contractFileFile"
+                  id="contractFile-file-input-admin"
                   label="Contrato Firmado"
                   fileState={contractFileState}
                   onFileChange={(file) => handleFileUpload(file, 'contractFile', setContractFileState)}
-                  existingFileUrl={form.getValues('contractFileUrl')}
-                  existingFileName={form.getValues('contractFileName')}
+                  existingFileUrl={client?.contractFileUrl}
+                  existingFileName={client?.contractFileName}
                 />
               </CardContent>
             </Card>
