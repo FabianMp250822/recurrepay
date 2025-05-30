@@ -7,12 +7,11 @@ import * as store from '@/lib/store';
 import type { Client, PublicClientFormData } from '@/types';
 import { calculateNextPaymentDate as calculateNextRegPaymentDateUtil } from '@/lib/utils';
 import { IVA_RATE } from '@/lib/constants';
-import { getFinancingOptionsMap } from '@/lib/store'; // Import to fetch options
-// import { auth } from '@/lib/firebase'; // No longer needed here, auth context is client-side for the action call
+import { getFinancingOptionsMap } from '@/lib/store'; 
 
-async function calculatePublicFinancingDetails(formData: PublicClientFormData): Promise<Partial<Client>> {
+async function calculatePublicFinancingDetails(formData: PublicClientFormData & { email: string }): Promise<Partial<Client>> {
   const contractValue = formData.contractValue || 0;
-  const downPaymentPercentage = 0; // For self-registration, assume 0% down payment.
+  const downPaymentPercentage = 0; // For self-registration, assume 0% down payment by default.
   const financingPlanKey = formData.financingPlan;
 
   const financingOptionsFromDb = await getFinancingOptionsMap();
@@ -42,7 +41,7 @@ async function calculatePublicFinancingDetails(formData: PublicClientFormData): 
     details.downPayment = details.totalWithIva * (downPaymentPercentage / 100); 
     details.amountToFinance = Math.max(0, details.totalWithIva - details.downPayment);
 
-    if (financingPlanKey !== 0 && details.amountToFinance > 0) {
+    if (financingPlanKey !== 0 && details.amountToFinance > 0 && financingOptionsFromDb[financingPlanKey]) {
       const planInfo = financingOptionsFromDb[financingPlanKey];
       if (planInfo) {
         details.financingInterestRateApplied = planInfo.rate;
@@ -55,19 +54,27 @@ async function calculatePublicFinancingDetails(formData: PublicClientFormData): 
       calculatedPaymentAmount = 0;
       details.status = 'completed';
     } else if (financingPlanKey === 0) { 
-      calculatedPaymentAmount = 0; // If contract value > 0, and no financing, implies one-time payment or admin needs to set recurring
-       if (details.amountToFinance === 0) { // Fully paid by (zero) downpayment
+       // If contract value > 0, and no financing, this implies a one-time payment.
+       // The payment amount would be totalWithIva, but recurring monthly payment is 0.
+       // Status would be 'completed' after this one-time payment (not handled by this recurring logic).
+       // For simplicity, we set recurring monthly payment to 0.
+       calculatedPaymentAmount = 0; 
+       if (details.amountToFinance === 0) { 
           details.status = 'completed';
        } else {
-         // If there's contract value but no financing, payment amount is not determined by this logic for recurring.
-         // Admin might need to set it. For now, it's 0.
-         // Client will be 'active' but might need payment terms defined.
+          // Client has a contract value but no financing, so their "recurring" payment is 0.
+          // They would pay totalWithIva upfront.
+          // The admin UI can show this correctly. For recurring logic, paymentAmount is 0.
        }
     }
-  } else { // No contract value (e.g. future simple recurring service without contract)
-    // This form currently focuses on contractValue. If contractValue is 0, paymentAmount is 0.
-    calculatedPaymentAmount = 0;
-    details.status = 'completed'; // Or 'pending_setup' if admin needs to define payment for a service
+  } else { // No contract value (e.g., simple recurring service without contract value)
+    // This form currently requires a contractValue if financing is chosen.
+    // If contractValue is 0, and no financing, then admin needs to set payment amount.
+    // For self-registration, if contractValue is 0, we set paymentAmount to 0 by default.
+    calculatedPaymentAmount = 0; 
+    // If contract value is 0 and no specific payment amount is set for a service,
+    // it's effectively 'completed' or needs admin setup.
+    details.status = 'completed'; 
   }
   
   details.paymentAmount = calculatedPaymentAmount;
@@ -75,12 +82,8 @@ async function calculatePublicFinancingDetails(formData: PublicClientFormData): 
 }
 
 
-export async function selfRegisterClientAction(formData: PublicClientFormData) {
-  // The user should be authenticated by Firebase client-side SDK before this action is called.
-  // Server Actions invoked from client components will have the auth context.
-  // For Firestore rules, `request.auth` should be populated.
-
-  if (!formData.email) { // Email must be passed from the authenticated user context
+export async function selfRegisterClientAction(formData: PublicClientFormData & { email: string }) {
+  if (!formData.email) {
     return { success: false, generalError: "Error: El correo electrónico del usuario no está disponible. El usuario debe estar autenticado." };
   }
 
@@ -92,22 +95,21 @@ export async function selfRegisterClientAction(formData: PublicClientFormData) {
 
   const validatedData = validationResult.data;
   
-  // Check for email uniqueness (using the email from validated form data, which should match authenticated user)
   const existingClientByEmail = await store.getClientByEmail(formData.email);
   if (existingClientByEmail) {
     return { success: false, generalError: "Ya existe un cliente registrado con este correo electrónico. Por favor, contacte a soporte." };
   }
 
-  const financingDetails = await calculatePublicFinancingDetails(validatedData);
+  const financingDetails = await calculatePublicFinancingDetails(formData); // Pass full formData
 
-  if (validatedData.contractValue > 0 && financingDetails.paymentAmount === 0 && financingDetails.status !== 'completed') {
-     console.warn(`Cliente ${formData.email} se registró con valor de contrato pero monto de pago 0 (excl. completado). Requiere revisión.`);
+  if (validatedData.contractValue && validatedData.contractValue > 0 && financingDetails.paymentAmount === 0 && financingDetails.status !== 'completed') {
+     console.warn(`Cliente ${formData.email} se registró con valor de contrato pero monto de pago 0 (excl. completado). Requiere revisión o es pago único.`);
   }
 
   const clientToCreate: Omit<Client, 'id'> = {
     firstName: validatedData.firstName,
     lastName: validatedData.lastName,
-    email: formData.email, // Use the email from the authenticated user
+    email: formData.email,
     phoneNumber: validatedData.phoneNumber,
     ...financingDetails,
     paymentAmount: financingDetails.paymentAmount!,
@@ -115,7 +117,7 @@ export async function selfRegisterClientAction(formData: PublicClientFormData) {
     nextPaymentDate: calculateNextRegPaymentDateUtil(validatedData.paymentDayOfMonth).toISOString(),
     createdAt: new Date().toISOString(),
     paymentsMadeCount: 0,
-    // status will come from financingDetails, defaults to 'active' or 'completed'
+    status: financingDetails.status || 'active',
   };
   
   Object.keys(clientToCreate).forEach(key => (clientToCreate as any)[key] === undefined && delete (clientToCreate as any)[key]);
