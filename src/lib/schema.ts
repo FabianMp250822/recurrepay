@@ -13,17 +13,18 @@ export const clientSchema = z.object({
   ),
   downPaymentPercentage: z.preprocess(
     (val) => (val === "" || val === null || val === undefined ? undefined : parseFloat(String(val))),
-    z.number().min(30, "El porcentaje de abono no puede ser menor al 30%.").max(100, "El porcentaje no puede exceder 100.").optional()
+    // La validación min/max se hará con superRefine ahora
+    z.number().min(0, "El porcentaje de abono no puede ser negativo.").max(100, "El porcentaje no puede exceder 100.").optional()
   ),
   paymentMethod: z.string().optional().or(z.literal('')),
-  financingPlan: z.coerce.number()
+  financingPlan: z.coerce.number() // Permite que sea 0 para "Sin financiación"
     .optional().or(z.literal(0)),
   
   paymentDayOfMonth: z.coerce.number().int().min(1, { message: "El día debe estar entre 1 y 31." }).max(31, { message: "El día debe estar entre 1 y 31." }),
 
   paymentAmount: z.preprocess(
     (val) => (val === "" || val === null || val === undefined ? undefined : parseFloat(String(val))),
-    z.number().positive({message: "El monto de pago recurrente debe ser positivo"}).optional()
+    z.number().min(0, "El monto de pago no puede ser negativo.").optional() // Permitir 0 si está totalmente pagado o es calculado
   ),
 
   acceptanceLetterUrl: z.string().url().optional().or(z.literal('')),
@@ -31,35 +32,75 @@ export const clientSchema = z.object({
   contractFileUrl: z.string().url().optional().or(z.literal('')),
   contractFileName: z.string().optional().or(z.literal('')),
 
-}).refine(data => {
-  if (data.financingPlan && data.financingPlan !== 0) {
-    return data.contractValue !== undefined && data.contractValue > 0;
+}).superRefine((data, ctx) => {
+  const contractValue = data.contractValue ?? 0;
+
+  if (contractValue > 0 && contractValue < 1000000) {
+    // Para contratos < $1,000,000
+    if (data.financingPlan !== 0 && data.financingPlan !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Para contratos menores a $1,000,000, no se ofrece financiación.",
+        path: ["financingPlan"],
+      });
+    }
+    if (data.downPaymentPercentage !== 0 && data.downPaymentPercentage !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Para contratos menores a $1,000,000, no se acepta abono inicial.",
+        path: ["downPaymentPercentage"],
+      });
+    }
+    // El paymentAmount debería ser el total del contrato (calculado en el form/action)
+    if (data.paymentAmount === undefined || data.paymentAmount <= 0) {
+        // Se espera que el paymentAmount sea el totalWithIva. Si no, es un error.
+        // Esta validación es más para asegurar que el dato final sea correcto.
+        // El form intentará auto-llenarlo.
+    }
+
+  } else if (contractValue >= 1000000) {
+    // Para contratos >= $1,000,000
+    if (data.downPaymentPercentage !== undefined && data.downPaymentPercentage < 20) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "El porcentaje de abono inicial no puede ser inferior al 20% para contratos de este valor.",
+        path: ["downPaymentPercentage"],
+      });
+    }
   }
-  return true;
-}, {
-  message: "Se requiere un valor de contrato para la financiación.",
-  path: ["contractValue"],
-}).refine(data => {
-    if (data.contractValue !== undefined && data.contractValue > 0 && data.financingPlan === 0) {
-        // If there's a contract value and no financing plan, it could be a single payment.
-        // Payment amount is optional here, as the total contract value (after down payment) might be paid upfront.
-        // Or a recurring payment amount could be set.
-        return true; 
+
+  // Validación general del paymentAmount
+  if (data.financingPlan && data.financingPlan !== 0 && contractValue > 0) {
+    // Si hay financiación, el paymentAmount es calculado y no requiere validación directa aquí (salvo que sea 0 si algo falló).
+    // Se podría verificar si es positivo si se espera una cuota.
+  } else if (data.financingPlan === 0 && contractValue > 0) {
+    // Contrato sin financiación (pago único o con recurrente adicional)
+    if (data.paymentAmount === undefined || data.paymentAmount <= 0) {
+      // Si el contrato es < 1M, este se auto-llenará. Si es >= 1M y pago único (sin abono o abono cubre todo),
+      // paymentAmount podría ser 0 si se considera pagado por abono, o el saldo restante.
+      // Si se requiere un monto de pago explícito (ej. servicio recurrente sobre contrato pagado), debe ser > 0.
+      // Esta lógica es compleja para una sola regla Zod; el formulario y las acciones deben manejarla.
+      // Por ahora, si no hay financiación y hay contrato, esperamos que paymentAmount sea >= 0.
+       if (data.paymentAmount === undefined || data.paymentAmount < 0) {
+         ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Se requiere un monto de pago válido para contratos sin financiación.",
+            path: ["paymentAmount"],
+         });
+       }
     }
-    if (data.financingPlan && data.financingPlan !== 0 && data.contractValue && data.contractValue > 0) {
-        // If there's a financing plan and contract value, paymentAmount will be calculated and is not directly required from user.
-        return true;
+  } else if (contractValue === 0 && (data.financingPlan === 0 || data.financingPlan === undefined)) {
+    // Sin contrato y sin financiación (servicio recurrente simple)
+    if (data.paymentAmount === undefined || data.paymentAmount <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Se requiere un monto de pago recurrente positivo si no hay contrato ni financiación.",
+        path: ["paymentAmount"],
+      });
     }
-    
-    if ((data.contractValue === undefined || data.contractValue === 0) && (data.financingPlan === undefined || data.financingPlan === 0)) {
-        // No contract, no financing plan => simple recurring service, paymentAmount is required and must be positive.
-        return data.paymentAmount !== undefined && data.paymentAmount > 0;
-    }
-    return true;
-}, {
-    message: "Se requiere un monto de pago recurrente si no hay financiación o valor de contrato.",
-    path: ["paymentAmount"],
+  }
 });
+
 
 export const registrationSchema = z.object({
   email: z.string().email({ message: "Dirección de correo electrónico inválida." }),
@@ -72,7 +113,6 @@ export const registrationSchema = z.object({
 
 
 export const publicClientSchema = z.object({
-  // El email se tomará del usuario autenticado
   firstName: z.string().min(1, { message: "El nombre es obligatorio." }).max(50, { message: "El nombre debe tener 50 caracteres o menos." }),
   lastName: z.string().min(1, { message: "El apellido es obligatorio." }).max(50, { message: "El apellido debe tener 50 caracteres o menos." }),
   phoneNumber: z.string().min(7, { message: "El número de teléfono debe tener al menos 7 dígitos." }).max(15, { message: "El número de teléfono debe tener 15 dígitos o menos." }).regex(/^\+?[0-9\s-()]+$/, { message: "Formato de número de teléfono inválido."}),
@@ -90,7 +130,7 @@ export const publicClientSchema = z.object({
   contractFileName: z.string().max(100, "Nombre de archivo muy largo.").optional().or(z.literal('')),
 
 }).refine(data => {
-  if (data.contractValue > 0 && data.financingPlan === undefined) { // Check if financingPlan is undefined when contractValue > 0
+  if (data.contractValue > 0 && data.financingPlan === undefined) { 
     return false; 
   }
   return true;
