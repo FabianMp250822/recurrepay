@@ -9,9 +9,18 @@ import { calculateNextPaymentDate as calculateNextRegPaymentDateUtil } from '@/l
 import { IVA_RATE } from '@/lib/constants';
 import { getFinancingOptionsMap } from '@/lib/store'; 
 
-async function calculatePublicFinancingDetails(formData: PublicClientFormData & { email: string }): Promise<Partial<Client>> {
+// Tipado extendido para incluir los campos de archivo
+type SelfRegisterClientFormData = PublicClientFormData & {
+  email: string;
+  acceptanceLetterUrl?: string;
+  acceptanceLetterFileName?: string;
+  contractFileUrl?: string;
+  contractFileName?: string;
+};
+
+async function calculatePublicFinancingDetails(formData: SelfRegisterClientFormData): Promise<Partial<Client>> {
   const contractValue = formData.contractValue || 0;
-  const downPaymentPercentage = 0; // For self-registration, assume 0% down payment by default.
+  const downPaymentPercentage = 0; // Para auto-registro, abono 0% por defecto.
   const financingPlanKey = formData.financingPlan;
 
   const financingOptionsFromDb = await getFinancingOptionsMap();
@@ -30,6 +39,11 @@ async function calculatePublicFinancingDetails(formData: PublicClientFormData & 
     totalAmountWithInterest: 0,
     paymentsMadeCount: 0,
     status: 'active', 
+    // Incluir URLs de documentos si se proporcionan
+    acceptanceLetterUrl: formData.acceptanceLetterUrl,
+    acceptanceLetterFileName: formData.acceptanceLetterFileName,
+    contractFileUrl: formData.contractFileUrl,
+    contractFileName: formData.contractFileName,
   };
 
   let calculatedPaymentAmount = 0;
@@ -54,26 +68,13 @@ async function calculatePublicFinancingDetails(formData: PublicClientFormData & 
       calculatedPaymentAmount = 0;
       details.status = 'completed';
     } else if (financingPlanKey === 0) { 
-       // If contract value > 0, and no financing, this implies a one-time payment.
-       // The payment amount would be totalWithIva, but recurring monthly payment is 0.
-       // Status would be 'completed' after this one-time payment (not handled by this recurring logic).
-       // For simplicity, we set recurring monthly payment to 0.
        calculatedPaymentAmount = 0; 
        if (details.amountToFinance === 0) { 
           details.status = 'completed';
-       } else {
-          // Client has a contract value but no financing, so their "recurring" payment is 0.
-          // They would pay totalWithIva upfront.
-          // The admin UI can show this correctly. For recurring logic, paymentAmount is 0.
        }
     }
-  } else { // No contract value (e.g., simple recurring service without contract value)
-    // This form currently requires a contractValue if financing is chosen.
-    // If contractValue is 0, and no financing, then admin needs to set payment amount.
-    // For self-registration, if contractValue is 0, we set paymentAmount to 0 by default.
+  } else { 
     calculatedPaymentAmount = 0; 
-    // If contract value is 0 and no specific payment amount is set for a service,
-    // it's effectively 'completed' or needs admin setup.
     details.status = 'completed'; 
   }
   
@@ -82,12 +83,23 @@ async function calculatePublicFinancingDetails(formData: PublicClientFormData & 
 }
 
 
-export async function selfRegisterClientAction(formData: PublicClientFormData & { email: string }) {
+export async function selfRegisterClientAction(formData: SelfRegisterClientFormData) {
   if (!formData.email) {
     return { success: false, generalError: "Error: El correo electrónico del usuario no está disponible. El usuario debe estar autenticado." };
   }
 
-  const validationResult = publicClientSchema.safeParse(formData);
+  // Validar solo los campos de PublicClientFormData, los de archivo son opcionales y ya vienen como URLs
+  const clientDetailsToValidate: PublicClientFormData = {
+    firstName: formData.firstName,
+    lastName: formData.lastName,
+    phoneNumber: formData.phoneNumber,
+    contractValue: formData.contractValue,
+    financingPlan: formData.financingPlan,
+    paymentDayOfMonth: formData.paymentDayOfMonth,
+    // No incluir los campos de archivo aquí para la validación de Zod, ya son URLs
+  };
+
+  const validationResult = publicClientSchema.safeParse(clientDetailsToValidate);
   if (!validationResult.success) {
     console.error("Self-registration validation errors:", validationResult.error.flatten().fieldErrors);
     return { success: false, errors: validationResult.error.flatten().fieldErrors };
@@ -100,7 +112,8 @@ export async function selfRegisterClientAction(formData: PublicClientFormData & 
     return { success: false, generalError: "Ya existe un cliente registrado con este correo electrónico. Por favor, contacte a soporte." };
   }
 
-  const financingDetails = await calculatePublicFinancingDetails(formData); // Pass full formData
+  // Pasar el formData completo a calculatePublicFinancingDetails para que tenga acceso a las URLs
+  const financingDetails = await calculatePublicFinancingDetails(formData); 
 
   if (validatedData.contractValue && validatedData.contractValue > 0 && financingDetails.paymentAmount === 0 && financingDetails.status !== 'completed') {
      console.warn(`Cliente ${formData.email} se registró con valor de contrato pero monto de pago 0 (excl. completado). Requiere revisión o es pago único.`);
@@ -109,7 +122,7 @@ export async function selfRegisterClientAction(formData: PublicClientFormData & 
   const clientToCreate: Omit<Client, 'id'> = {
     firstName: validatedData.firstName,
     lastName: validatedData.lastName,
-    email: formData.email,
+    email: formData.email, // Usar el email del usuario autenticado
     phoneNumber: validatedData.phoneNumber,
     ...financingDetails,
     paymentAmount: financingDetails.paymentAmount!,
@@ -118,6 +131,7 @@ export async function selfRegisterClientAction(formData: PublicClientFormData & 
     createdAt: new Date().toISOString(),
     paymentsMadeCount: 0,
     status: financingDetails.status || 'active',
+    // Las URLs de los documentos ya están incluidas a través de ...financingDetails
   };
   
   Object.keys(clientToCreate).forEach(key => (clientToCreate as any)[key] === undefined && delete (clientToCreate as any)[key]);

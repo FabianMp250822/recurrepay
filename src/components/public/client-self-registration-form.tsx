@@ -1,84 +1,149 @@
 
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm, Controller } from 'react-hook-form';
 import type { z } from 'zod';
+import React, { useEffect, useState, useCallback } from 'react';
 import { createUserWithEmailAndPassword, type User as FirebaseUser } from 'firebase/auth';
-import { useRouter } from 'next/navigation';
-
-import { auth } from '@/lib/firebase';
-import { registrationSchema, publicClientSchema } from '@/lib/schema';
-import type { PublicClientFormData, AppFinancingSettings, CalculatedFinancingValues } from '@/types';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { auth, storage } from '@/lib/firebase';
+import { publicClientSchema, registrationSchema } from '@/lib/schema';
+import type { PublicClientFormData, AppGeneralSettings } from '@/types';
 import { selfRegisterClientAction } from '@/app/actions/publicClientActions';
-import { fetchGeneralSettingsAction } from '@/app/actions/settingsActions';
-import { getFinancingOptionsMap } from '@/lib/store';
+import { getFinancingOptionsMap, getGeneralSettings } from '@/lib/store';
 import { IVA_RATE } from '@/lib/constants';
 import { formatCurrency } from '@/lib/utils';
 
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useToast } from '@/hooks/use-toast';
-import { Loader2 } from 'lucide-react';
+import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Terminal } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import { Loader2, UserPlus, FileText, CheckCircle, UploadCloud, XCircle, LinkIcon } from 'lucide-react';
+import { Separator } from '../ui/separator';
 
-type RegistrationStep = 'initial' | 'details' | 'completed';
+type RegistrationStep = 'initial' | 'details' | 'completed' | 'error';
+type FinancingOptionsMapType = { [key: number]: { rate: number; label: string } };
+
+type CalculatedValues = {
+  ivaAmount: number;
+  totalWithIva: number;
+  amountToFinance: number;
+  financingInterestRateApplied: number;
+  financingInterestAmount: number;
+  totalAmountWithInterest: number;
+  monthlyInstallment: number;
+};
+
+type FileUploadState = {
+  file: File | null;
+  progress: number;
+  url: string | null;
+  name: string | null;
+  error: string | null;
+  isUploading: boolean;
+};
+
+const initialFileUploadState: FileUploadState = {
+  file: null, progress: 0, url: null, name: null, error: null, isUploading: false
+};
+
+const FileInputField = ({
+  id,
+  label,
+  fileState,
+  onFileChange,
+  disabled,
+}: {
+  id: string;
+  label: string;
+  fileState: FileUploadState;
+  onFileChange: (file: File) => void;
+  disabled?: boolean;
+}) => (
+  <FormItem>
+    <FormLabel>{label}</FormLabel>
+    {fileState.url && !fileState.isUploading && (
+      <div className="text-sm text-muted-foreground mb-1">
+        Archivo actual: <a href={fileState.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-1"><LinkIcon size={14}/> {fileState.name || 'Ver archivo'}</a>
+      </div>
+    )}
+    <FormControl>
+      <Input
+        id={id}
+        type="file"
+        onChange={(e) => e.target.files?.[0] && onFileChange(e.target.files[0])}
+        className="flex-grow"
+        disabled={fileState.isUploading || disabled}
+      />
+    </FormControl>
+    {fileState.isUploading && (
+      <div className="mt-1">
+        <Progress value={fileState.progress} className="w-full h-2" />
+        <p className="text-xs text-muted-foreground mt-1">Subiendo: {fileState.file?.name} ({fileState.progress.toFixed(0)}%)</p>
+      </div>
+    )}
+    {fileState.url && !fileState.isUploading && (
+      <div className="mt-1 text-xs text-green-600 flex items-center gap-1">
+        <CheckCircle size={14} /> ¡{fileState.name} subido!
+      </div>
+    )}
+    {fileState.error && !fileState.isUploading && (
+      <div className="mt-1 text-xs text-destructive flex items-center gap-1">
+        <XCircle size={14} /> Error: {fileState.error}
+      </div>
+    )}
+    <FormMessage />
+  </FormItem>
+);
+
 
 export function ClientSelfRegistrationForm() {
+  const { toast } = useToast();
   const [appName, setAppName] = useState('RecurPay');
-  const [financingOptionsDb, setFinancingOptionsDb] = useState<{ [key: number]: { rate: number; label: string } }>({});
-  const [isLoadingAppName, setIsLoadingAppName] = useState(true);
-  const [isLoadingFinancingOptions, setIsLoadingFinancingOptions] = useState(true);
-  const [formError, setFormError] = useState<string | null>(null);
   const [registrationStep, setRegistrationStep] = useState<RegistrationStep>('initial');
   const [registeredUser, setRegisteredUser] = useState<FirebaseUser | null>(null);
+  const [isSubmittingRegistration, setIsSubmittingRegistration] = useState(false);
+  const [isSubmittingDetails, setIsSubmittingDetails] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
-  const [calculatedValues, setCalculatedValues] = useState<CalculatedFinancingValues>({
-    ivaAmount: 0,
-    totalWithIva: 0,
-    amountToFinance: 0,
-    financingInterestRateApplied: 0,
-    financingInterestAmount: 0,
-    totalAmountWithInterest: 0,
-    monthlyInstallment: 0,
-    downPaymentAmount: 0, // For self-registration, downPayment is 0
-  });
+  const [financingOptions, setFinancingOptions] = useState<FinancingOptionsMapType>({});
   const [showFinancingDetails, setShowFinancingDetails] = useState(false);
+  const [calculatedValues, setCalculatedValues] = useState<CalculatedValues>({
+    ivaAmount: 0, totalWithIva: 0, amountToFinance: 0, financingInterestRateApplied: 0,
+    financingInterestAmount: 0, totalAmountWithInterest: 0, monthlyInstallment: 0,
+  });
 
-  const { toast } = useToast();
-  const router = useRouter();
+  // File upload states
+  const [acceptanceLetterState, setAcceptanceLetterState] = useState<FileUploadState>(initialFileUploadState);
+  const [contractFileState, setContractFileState] = useState<FileUploadState>(initialFileUploadState);
 
   useEffect(() => {
-    async function loadInitialData() {
-      setIsLoadingAppName(true);
-      setIsLoadingFinancingOptions(true);
+    async function loadSettings() {
       try {
-        const settings = await fetchGeneralSettingsAction();
-        if (settings && settings.appName) {
-          setAppName(settings.appName);
-        }
-      } catch (error) {
-        console.error("Error fetching app name for self-registration:", error);
-      } finally {
-        setIsLoadingAppName(false);
-      }
-
-      try {
+        const settings: AppGeneralSettings = await getGeneralSettings();
+        if (settings && settings.appName) setAppName(settings.appName);
         const options = await getFinancingOptionsMap();
-        setFinancingOptionsDb(options);
+        setFinancingOptions(options);
       } catch (error) {
-        console.error("Error fetching financing options for self-registration:", error);
-        toast({ title: "Error", description: "No se pudieron cargar las opciones de financiación.", variant: "destructive" });
-      } finally {
-        setIsLoadingFinancingOptions(false);
+        console.error("Error fetching settings for self-registration:", error);
+        toast({ title: "Error", description: "No se pudieron cargar las configuraciones necesarias.", variant: "destructive" });
       }
     }
-    loadInitialData();
+    loadSettings();
   }, [toast]);
 
   const registrationForm = useForm<z.infer<typeof registrationSchema>>({
@@ -89,169 +154,169 @@ export function ClientSelfRegistrationForm() {
   const clientDetailsForm = useForm<z.infer<typeof publicClientSchema>>({
     resolver: zodResolver(publicClientSchema),
     defaultValues: {
-      firstName: '',
-      lastName: '',
-      phoneNumber: '',
-      contractValue: 0,
-      financingPlan: 0, // Default to "Sin financiación"
-      paymentDayOfMonth: 1,
+      firstName: '', lastName: '', phoneNumber: '', contractValue: undefined,
+      financingPlan: 0, paymentDayOfMonth: 1,
+      acceptanceLetterUrl: undefined, acceptanceLetterFileName: undefined,
+      contractFileUrl: undefined, contractFileName: undefined,
     },
   });
-
-  const handleRegistrationSubmit = async (data: z.infer<typeof registrationSchema>) => {
-    registrationForm.clearErrors();
-    setFormError(null);
-    try {
-      const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
-      setRegisteredUser(userCredential.user);
-      clientDetailsForm.setValue('email', userCredential.user.email || ''); // Pre-fill for next step
-      setRegistrationStep('details');
-      toast({ title: 'Cuenta Creada', description: 'Por favor, completa tus datos personales y del contrato.' });
-    } catch (error: any) {
-      console.error("Error en registro de Firebase Auth:", error);
-      let message = "Error al crear la cuenta. Inténtelo de nuevo.";
-      if (error.code === 'auth/email-already-in-use') {
-        message = "Este correo electrónico ya está en uso. Por favor, intente con otro.";
-      } else if (error.code === 'auth/weak-password') {
-        message = "La contraseña es demasiado débil. Debe tener al menos 6 caracteres.";
-      }
-      setFormError(message);
-      registrationForm.setError("email", { type: "manual", message });
-    }
-  };
-
-  const handleClientDetailsSubmit = async (data: z.infer<typeof publicClientSchema>) => {
-    clientDetailsForm.clearErrors();
-    setFormError(null);
-    if (!registeredUser || !registeredUser.email) {
-      setFormError("Error: No se encontró información del usuario registrado para continuar.");
-      return;
-    }
-
-    const formDataWithEmail: PublicClientFormData & { email: string } = {
-      ...data,
-      email: registeredUser.email,
-    };
-
-    // Ensure paymentAmount is set based on calculations if financing is involved
-    if (data.contractValue && data.contractValue > 0 && data.financingPlan && data.financingPlan !== 0) {
-        formDataWithEmail.paymentAmount = parseFloat(calculatedValues.monthlyInstallment.toFixed(2));
-    } else if (data.contractValue === 0) {
-        formDataWithEmail.paymentAmount = 0; // If no contract value, recurring payment is 0 for this form
-    } else {
-        // This case (contract value > 0, no financing plan) should ideally be handled by schema or specific business logic
-        // For now, if it passes schema, it implies a one-time payment and recurring might be 0 or user-set.
-        // Here, we assume calculated (which would be 0 if no financing) or let schema handle it.
-        // The publicClientSchema might need refinement if paymentAmount is expected here.
-        formDataWithEmail.paymentAmount = data.paymentAmount || 0; // Fallback for safety, though schema should guide this
-    }
-
-
-    try {
-      const result = await selfRegisterClientAction(formDataWithEmail);
-      if (result.success) {
-        setRegistrationStep('completed');
-        toast({ title: '¡Registro Exitoso!', description: 'Gracias por registrarte. Nos pondremos en contacto contigo pronto.' });
-        // Optionally redirect or clear forms
-        registrationForm.reset();
-        clientDetailsForm.reset();
-      } else {
-        if (result.errors) {
-          Object.entries(result.errors).forEach(([field, messages]) => {
-            if (messages && messages.length > 0) {
-              clientDetailsForm.setError(field as keyof z.infer<typeof publicClientSchema>, { type: 'manual', message: messages[0] });
-            }
-          });
-        }
-        setFormError(result.generalError || 'Error al guardar la información. Por favor, inténtelo de nuevo.');
-      }
-    } catch (error) {
-      console.error("Error inesperado en selfRegisterClientAction:", error);
-      setFormError('Ocurrió un error inesperado. Por favor, inténtelo más tarde.');
-    }
-  };
 
   const watchedContractValue = clientDetailsForm.watch('contractValue');
   const watchedFinancingPlan = clientDetailsForm.watch('financingPlan');
 
   useEffect(() => {
-    const contractVal = parseFloat(String(watchedContractValue)) || 0;
+    const contractVal = parseFloat(String(watchedContractValue));
     const financingPlanKey = Number(watchedFinancingPlan);
+    let cv = isNaN(contractVal) ? 0 : contractVal;
 
-    let ivaAmount = 0;
-    let totalWithIva = contractVal;
-    let amountToFinance = contractVal; // Assuming 0% down payment for self-registration
-    let financingInterestRateApplied = 0;
-    let financingInterestAmount = 0;
-    let totalAmountWithInterest = contractVal; // Starts as contractVal, potentially with IVA then interest
-    let monthlyInstallment = 0;
+    const ivaAmount = cv * IVA_RATE;
+    const totalWithIva = cv + ivaAmount;
+    
+    setShowFinancingDetails(financingPlanKey !== 0 && cv > 0 && Object.keys(financingOptions).length > 0);
 
-    if (contractVal > 0) {
-      ivaAmount = contractVal * IVA_RATE;
-      totalWithIva = contractVal + ivaAmount;
-      amountToFinance = totalWithIva; // Still assuming 0% down for self-registration
+    if (financingPlanKey !== 0 && cv > 0 && financingOptions[financingPlanKey]) {
+      const amountToFinance = totalWithIva; // No down payment in self-registration for now
+      const planDetails = financingOptions[financingPlanKey];
+      const interestRate = planDetails ? planDetails.rate : 0;
+      const financingInterestAmount = amountToFinance * interestRate;
+      const totalAmountWithInterest = amountToFinance + financingInterestAmount;
+      const monthlyInstallment = financingPlanKey > 0 ? totalAmountWithInterest / financingPlanKey : 0;
 
-      if (financingPlanKey !== 0 && financingOptionsDb[financingPlanKey]) {
-        const planDetails = financingOptionsDb[financingPlanKey];
-        financingInterestRateApplied = planDetails.rate;
-        financingInterestAmount = amountToFinance * financingInterestRateApplied;
-        totalAmountWithInterest = amountToFinance + financingInterestAmount;
-        const numberOfMonths = financingPlanKey;
-        monthlyInstallment = numberOfMonths > 0 ? totalAmountWithInterest / numberOfMonths : 0;
-        setShowFinancingDetails(true);
+      setCalculatedValues({
+        ivaAmount, totalWithIva, amountToFinance,
+        financingInterestRateApplied: interestRate, financingInterestAmount,
+        totalAmountWithInterest, monthlyInstallment,
+      });
+    } else {
+      setCalculatedValues({
+        ivaAmount: cv > 0 ? ivaAmount : 0,
+        totalWithIva: cv > 0 ? totalWithIva : cv,
+        amountToFinance: cv > 0 ? totalWithIva : 0,
+        financingInterestRateApplied: 0, financingInterestAmount: 0,
+        totalAmountWithInterest: 0, monthlyInstallment: 0,
+      });
+    }
+  }, [watchedContractValue, watchedFinancingPlan, financingOptions]);
+
+  const handleUserRegistration = async (values: z.infer<typeof registrationSchema>) => {
+    setIsSubmittingRegistration(true);
+    setAuthError(null);
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
+      setRegisteredUser(userCredential.user);
+      clientDetailsForm.setValue('email', userCredential.user.email || ''); // Pre-fill email for next step
+      setRegistrationStep('details');
+      toast({ title: "Cuenta Creada", description: "Por favor, completa tus datos para finalizar." });
+    } catch (error: any) {
+      console.error("Error en registro de Firebase Auth:", error);
+      if (error.code === 'auth/email-already-in-use') {
+        setAuthError("Este correo electrónico ya está registrado. Intenta iniciar sesión o usa otro correo.");
+      } else if (error.code === 'auth/weak-password') {
+        setAuthError("La contraseña es demasiado débil. Debe tener al menos 6 caracteres.");
       } else {
-        setShowFinancingDetails(false);
-        // If no financing or contract value is 0, monthly installment for recurring payment is 0 (or handled by a separate field if it was a service)
-        // For this form's logic, if contractValue > 0 and no financing, it's a one-time payment.
-        // The paymentAmount for *recurring* would be 0.
-        monthlyInstallment = 0;
-        totalAmountWithInterest = totalWithIva; // Total to pay is just totalWithIva if no financing.
+        setAuthError("Error al crear la cuenta: " + error.message);
       }
-    } else {
-      setShowFinancingDetails(false);
-      monthlyInstallment = 0; // If no contract, no recurring payment calculated here.
+    } finally {
+      setIsSubmittingRegistration(false);
+    }
+  };
+
+  const handleFileUpload = useCallback(async (
+    file: File,
+    fileType: 'acceptanceLetter' | 'contractFile',
+    setState: React.Dispatch<React.SetStateAction<FileUploadState>>
+  ) => {
+    if (!file || !registeredUser?.uid) {
+      toast({ title: "Error", description: "Usuario no registrado o archivo no válido.", variant: "destructive" });
+      return;
     }
 
-    setCalculatedValues({
-      ivaAmount,
-      totalWithIva,
-      amountToFinance,
-      financingInterestRateApplied,
-      financingInterestAmount,
-      totalAmountWithInterest,
-      monthlyInstallment,
-      downPaymentAmount: 0, // Fixed for self-registration
-    });
+    setState(prev => ({ ...prev, isUploading: true, file, progress: 0, error: null, name: file.name }));
+    const uniqueFileName = `${fileType}_${Date.now()}_${file.name}`;
+    const storagePath = `client_initial_documents/${registeredUser.uid}/${uniqueFileName}`;
+    const storageRef = ref(storage, storagePath);
+    const uploadTask = uploadBytesResumable(storageRef, file);
 
-    if (contractVal > 0 && financingPlanKey !== 0 && financingOptionsDb[financingPlanKey]) {
-      clientDetailsForm.setValue('paymentAmount', parseFloat(monthlyInstallment.toFixed(2)));
-    } else {
-      clientDetailsForm.setValue('paymentAmount', 0); // If no contract or no financing, recurring is 0
-    }
-
-  }, [watchedContractValue, watchedFinancingPlan, clientDetailsForm, financingOptionsDb]);
-
-
-  if (isLoadingAppName || isLoadingFinancingOptions) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[300px]">
-        <Loader2 className="h-12 w-12 animate-spin text-primary" />
-        <p className="mt-2 text-muted-foreground">Cargando configuración del formulario...</p>
-      </div>
+    uploadTask.on('state_changed',
+      (snapshot) => setState(prev => ({ ...prev, progress: (snapshot.bytesTransferred / snapshot.totalBytes) * 100 })),
+      (error) => {
+        console.error(`Error al subir ${fileType}:`, error);
+        setState(prev => ({ ...prev, isUploading: false, error: error.message, progress: 0 }));
+        toast({ title: `Error al subir ${fileType === 'acceptanceLetter' ? 'carta' : 'contrato'}`, description: error.message, variant: 'destructive' });
+      },
+      async () => {
+        const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+        setState(prev => ({ ...prev, isUploading: false, url: downloadURL, progress: 100 }));
+        if (fileType === 'acceptanceLetter') {
+          clientDetailsForm.setValue('acceptanceLetterUrl', downloadURL, { shouldValidate: true });
+          clientDetailsForm.setValue('acceptanceLetterFileName', file.name, { shouldValidate: true });
+        } else if (fileType === 'contractFile') {
+          clientDetailsForm.setValue('contractFileUrl', downloadURL, { shouldValidate: true });
+          clientDetailsForm.setValue('contractFileName', file.name, { shouldValidate: true });
+        }
+        toast({ title: `${fileType === 'acceptanceLetter' ? 'Carta subida' : 'Contrato subido'}`, description: `${file.name} subido.` });
+      }
     );
-  }
+  }, [registeredUser, toast, clientDetailsForm]);
+
+
+  const handleClientDetailsSubmit = async (values: z.infer<typeof publicClientSchema>) => {
+    if (!registeredUser || !registeredUser.email) {
+      setFormError("Error: No se pudo obtener la información del usuario registrado.");
+      return;
+    }
+    setIsSubmittingDetails(true);
+    setFormError(null);
+
+    const formDataForAction = {
+      ...values,
+      email: registeredUser.email, // Asegurar que el email del usuario registrado se envía
+      // Las URLs de los archivos ya están en 'values' a través de clientDetailsForm.setValue
+    };
+
+    try {
+      const result = await selfRegisterClientAction(formDataForAction);
+      if (result.success) {
+        toast({ title: "¡Registro Completado!", description: "Gracias por registrarte. Nos pondremos en contacto pronto." });
+        setRegistrationStep('completed');
+      } else {
+        setFormError(result.generalError || "Error al guardar tus datos. " + (result.errors ? JSON.stringify(result.errors) : ''));
+        if (result.errors) {
+          Object.entries(result.errors).forEach(([field, messages]) => {
+            if (messages && messages.length > 0) {
+              clientDetailsForm.setError(field as keyof PublicClientFormData, { type: 'manual', message: messages[0] });
+            }
+          });
+        }
+      }
+    } catch (error: any) {
+      console.error("Error en submit de detalles:", error);
+      setFormError("Ocurrió un error inesperado: " + error.message);
+    } finally {
+      setIsSubmittingDetails(false);
+    }
+  };
 
   if (registrationStep === 'completed') {
     return (
-      <Card className="w-full max-w-lg text-center p-8">
-        <CardHeader>
-          <CardTitle className="text-2xl font-bold text-primary">¡Gracias por Registrarte en {appName}!</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-lg">Tu información ha sido enviada.</p>
-          <p className="mt-2 text-muted-foreground">Nos pondremos en contacto contigo pronto si es necesario o puedes proceder a usar nuestros servicios según corresponda.</p>
-          {/* Podrías añadir un botón para ir a la página de login o al dashboard si el usuario ya puede acceder */}
-        </CardContent>
+      <Card className="w-full max-w-md text-center p-8">
+        <CheckCircle className="mx-auto h-16 w-16 text-green-500 mb-4" />
+        <CardTitle className="text-2xl font-bold">¡Gracias por Registrarte en {appName}!</CardTitle>
+        <CardDescription className="mt-2">
+          Hemos recibido tu información. Si es necesario, nuestro equipo se pondrá en contacto contigo pronto.
+        </CardDescription>
+      </Card>
+    );
+  }
+  
+  if (registrationStep === 'error') {
+    return (
+       <Card className="w-full max-w-md text-center p-8">
+        <XCircle className="mx-auto h-16 w-16 text-destructive mb-4" />
+        <CardTitle className="text-2xl font-bold">Error en el Registro</CardTitle>
+        <CardDescription className="mt-2">
+          {formError || "Ocurrió un error inesperado. Por favor, intenta más tarde o contacta a soporte."}
+        </CardDescription>
       </Card>
     );
   }
@@ -269,40 +334,16 @@ export function ClientSelfRegistrationForm() {
         )}
       </CardHeader>
       <CardContent>
-        {formError && (
-          <Alert variant="destructive" className="mb-6">
-            <Terminal className="h-4 w-4" />
-            <AlertTitle>Error</AlertTitle>
-            <AlertDescription>{formError}</AlertDescription>
-          </Alert>
-        )}
-
         {registrationStep === 'initial' && (
           <Form {...registrationForm}>
-            <form onSubmit={registrationForm.handleSubmit(handleRegistrationSubmit)} className="space-y-6">
-              <FormField control={registrationForm.control} name="email" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Correo Electrónico</FormLabel>
-                  <FormControl><Input type="email" placeholder="tu@correo.com" {...field} /></FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
-              <FormField control={registrationForm.control} name="password" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Contraseña</FormLabel>
-                  <FormControl><Input type="password" placeholder="********" {...field} /></FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
-              <FormField control={registrationForm.control} name="confirmPassword" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Confirmar Contraseña</FormLabel>
-                  <FormControl><Input type="password" placeholder="********" {...field} /></FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
-              <Button type="submit" className="w-full" disabled={registrationForm.formState.isSubmitting}>
-                {registrationForm.formState.isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : 'Crear Cuenta y Continuar'}
+            <form onSubmit={registrationForm.handleSubmit(handleUserRegistration)} className="space-y-6">
+              {authError && <Alert variant="destructive"><AlertTitle>Error de Registro</AlertTitle><AlertDescription>{authError}</AlertDescription></Alert>}
+              <FormField control={registrationForm.control} name="email" render={({ field }) => (<FormItem><FormLabel>Correo Electrónico</FormLabel><FormControl><Input type="email" placeholder="tu@correo.com" {...field} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={registrationForm.control} name="password" render={({ field }) => (<FormItem><FormLabel>Contraseña</FormLabel><FormControl><Input type="password" placeholder="********" {...field} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={registrationForm.control} name="confirmPassword" render={({ field }) => (<FormItem><FormLabel>Confirmar Contraseña</FormLabel><FormControl><Input type="password" placeholder="********" {...field} /></FormControl><FormMessage /></FormItem>)} />
+              <Button type="submit" className="w-full" disabled={isSubmittingRegistration}>
+                {isSubmittingRegistration && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Crear Cuenta y Continuar
               </Button>
             </form>
           </Form>
@@ -311,104 +352,92 @@ export function ClientSelfRegistrationForm() {
         {registrationStep === 'details' && registeredUser && (
           <Form {...clientDetailsForm}>
             <form onSubmit={clientDetailsForm.handleSubmit(handleClientDetailsSubmit)} className="space-y-8">
-              {/* Personal Info Fields */}
-              <FormField control={clientDetailsForm.control} name="firstName" render={({ field }) => (<FormItem><FormLabel>Nombres</FormLabel><FormControl><Input placeholder="Juan" {...field} /></FormControl><FormMessage /></FormItem>)} />
-              <FormField control={clientDetailsForm.control} name="lastName" render={({ field }) => (<FormItem><FormLabel>Apellidos</FormLabel><FormControl><Input placeholder="Pérez" {...field} /></FormControl><FormMessage /></FormItem>)} />
-              <FormItem>
-                <FormLabel>Correo Electrónico (Registrado)</FormLabel>
-                <FormControl><Input type="email" value={registeredUser.email || ''} readOnly disabled className="bg-muted/50" /></FormControl>
-              </FormItem>
-              <FormField control={clientDetailsForm.control} name="phoneNumber" render={({ field }) => (<FormItem><FormLabel>Número de Teléfono</FormLabel><FormControl><Input placeholder="3001234567" {...field} /></FormControl><FormMessage /></FormItem>)} />
+              {formError && <Alert variant="destructive"><AlertTitle>Error</AlertTitle><AlertDescription>{formError}</AlertDescription></Alert>}
+              
+              <p className="text-sm text-muted-foreground">Cuenta creada para: <strong>{registeredUser.email}</strong>. Por favor, completa los siguientes detalles.</p>
+              <Separator />
 
-              {/* Contract and Financing Fields */}
-              <FormField control={clientDetailsForm.control} name="contractValue" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Valor del Contrato/Servicio (antes de IVA, si aplica)</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="number" step="0.01" placeholder="0"
-                      value={field.value === undefined || field.value === null || isNaN(Number(field.value)) ? "" : String(field.value)}
-                      onChange={e => field.onChange(e.target.value === "" ? undefined : parseFloat(e.target.value))}
+              <Card>
+                <CardHeader><CardTitle className="text-lg">Información Personal</CardTitle></CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <FormField control={clientDetailsForm.control} name="firstName" render={({ field }) => (<FormItem><FormLabel>Nombres</FormLabel><FormControl><Input placeholder="Juan" {...field} /></FormControl><FormMessage /></FormItem>)} />
+                    <FormField control={clientDetailsForm.control} name="lastName" render={({ field }) => (<FormItem><FormLabel>Apellidos</FormLabel><FormControl><Input placeholder="Pérez" {...field} /></FormControl><FormMessage /></FormItem>)} />
+                  </div>
+                  <FormField control={clientDetailsForm.control} name="phoneNumber" render={({ field }) => (<FormItem><FormLabel>Número de Teléfono</FormLabel><FormControl><Input placeholder="3001234567" {...field} /></FormControl><FormMessage /></FormItem>)} />
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader><CardTitle className="text-lg">Detalles del Contrato/Servicio</CardTitle></CardHeader>
+                <CardContent className="space-y-4">
+                  <FormField control={clientDetailsForm.control} name="contractValue" render={({ field }) => (
+                      <FormItem><FormLabel>Valor del Contrato/Servicio (antes de IVA)</FormLabel><FormControl>
+                        <Input type="number" step="0.01" placeholder="1000000" {...field} onChange={e => field.onChange(e.target.value === "" ? undefined : parseFloat(e.target.value))} />
+                      </FormControl><FormMessage /></FormItem>)} 
+                  />
+                  <FormField control={clientDetailsForm.control} name="financingPlan" render={({ field }) => (
+                      <FormItem><FormLabel>Plan de Financiación</FormLabel><Select onValueChange={(value) => field.onChange(Number(value))} defaultValue={String(field.value)}>
+                          <FormControl><SelectTrigger><SelectValue placeholder="Seleccione un plan" /></SelectTrigger></FormControl>
+                          <SelectContent>{Object.keys(financingOptions).length > 0 ? 
+                              Object.entries(financingOptions).map(([key, option]) => (<SelectItem key={key} value={key}>{option.label} {option.rate > 0 ? `(${(option.rate * 100).toFixed(0)}% interés aprox.)` : ''}</SelectItem>))
+                              : <SelectItem value="0" disabled>Cargando planes...</SelectItem>}
+                          </SelectContent></Select><FormMessage />
+                      </FormItem>)}
+                  />
+                   {showFinancingDetails && (watchedContractValue ?? 0) > 0 && (
+                    <Card className="bg-muted/30 p-4 my-4">
+                      <CardHeader className="p-0 pb-2"><CardTitle className="text-md">Resumen de Financiación (Calculado)</CardTitle></CardHeader>
+                      <CardContent className="p-0 space-y-1 text-xs">
+                        <div className="flex justify-between"><span>Valor Contrato:</span> <strong>{formatCurrency(watchedContractValue || 0)}</strong></div>
+                        <div className="flex justify-between"><span>IVA ({(IVA_RATE * 100).toFixed(0)}%):</span> <strong>{formatCurrency(calculatedValues.ivaAmount)}</strong></div>
+                        <div className="flex justify-between"><span>Total con IVA:</span> <strong>{formatCurrency(calculatedValues.totalWithIva)}</strong></div>
+                        <div className="flex justify-between"><span>Saldo a Financiar:</span> <strong className="text-sm">{formatCurrency(calculatedValues.amountToFinance)}</strong></div>
+                        {Number(watchedFinancingPlan) !== 0 && (
+                          <>
+                            <div className="flex justify-between"><span>Tasa Interés Aplicada:</span> <strong>{(calculatedValues.financingInterestRateApplied * 100).toFixed(2)}%</strong></div>
+                            <div className="flex justify-between"><span>Monto Intereses Financiación:</span> <strong>{formatCurrency(calculatedValues.financingInterestAmount)}</strong></div>
+                            <div className="flex justify-between"><span>Total a Pagar (Financiado):</span> <strong>{formatCurrency(calculatedValues.totalAmountWithInterest)}</strong></div>
+                            <hr className="my-1"/>
+                            <div className="flex justify-between text-sm"><span>Valor Cuota Mensual ({watchedFinancingPlan} meses):</span> <strong className="text-primary">{formatCurrency(calculatedValues.monthlyInstallment)}</strong></div>
+                          </>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
+                  <FormField control={clientDetailsForm.control} name="paymentDayOfMonth" render={({ field }) => (
+                      <FormItem><FormLabel>Día de Pago Preferido de la Cuota</FormLabel><FormControl>
+                          <Input type="number" min="1" max="31" placeholder="15" {...field} onChange={e => field.onChange(parseInt(e.target.value, 10))} />
+                        </FormControl><FormDescription>Día (1-31) en que se generará el cobro mensual.</FormDescription><FormMessage />
+                      </FormItem>)}
+                  />
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader><CardTitle className="text-lg">Documentos (Opcional)</CardTitle></CardHeader>
+                <CardContent className="space-y-4">
+                    <FileInputField
+                        id="contractFile-public-input"
+                        label="Contrato Firmado (PDF, JPG, PNG)"
+                        fileState={contractFileState}
+                        onFileChange={(file) => handleFileUpload(file, 'contractFile', setContractFileState)}
+                        disabled={isSubmittingDetails || contractFileState.isUploading}
                     />
-                  </FormControl>
-                  <FormDescription>Si no es un contrato con valor específico, puedes dejarlo en 0.</FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )} />
-
-              <FormField control={clientDetailsForm.control} name="financingPlan" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Plan de Financiación (si aplica)</FormLabel>
-                  <Select onValueChange={(value) => field.onChange(Number(value))} defaultValue={String(field.value || 0)}>
-                    <FormControl><SelectTrigger><SelectValue placeholder="Seleccione un plan" /></SelectTrigger></FormControl>
-                    <SelectContent>
-                      {Object.keys(financingOptionsDb).length > 0 ?
-                        Object.entries(financingOptionsDb).map(([key, option]) => (
-                          <SelectItem key={key} value={key}>{option.label} {option.rate > 0 ? `(${(option.rate * 100).toFixed(0)}% interés aprox.)` : ''}</SelectItem>
-                        ))
-                        : <SelectItem value="0" disabled>Cargando planes...</SelectItem>}
-                    </SelectContent>
-                  </Select>
-                  <FormDescription>Si tu contrato/servicio no tiene financiación, selecciona "Sin financiación".</FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )} />
-
-              {/* Calculated Values Display */}
-              {showFinancingDetails && (watchedContractValue ?? 0) > 0 && (
-                <Card className="bg-muted/30">
-                  <CardHeader><CardTitle className="text-lg">Resumen de Financiación (Calculado)</CardTitle></CardHeader>
-                  <CardContent className="space-y-3 text-sm">
-                    <div className="flex justify-between"><span>Valor Contrato/Servicio:</span> <strong>{formatCurrency(watchedContractValue || 0)}</strong></div>
-                    <div className="flex justify-between"><span>IVA ({(IVA_RATE * 100).toFixed(0)}%):</span> <strong>{formatCurrency(calculatedValues.ivaAmount)}</strong></div>
-                    <div className="flex justify-between"><span>Total con IVA:</span> <strong>{formatCurrency(calculatedValues.totalWithIva)}</strong></div>
-                    <hr />
-                    <div className="flex justify-between"><span>Saldo a Financiar:</span> <strong className="text-base">{formatCurrency(calculatedValues.amountToFinance)}</strong></div>
-                    <div className="flex justify-between"><span>Tasa Interés Aplicada:</span> <strong>{(calculatedValues.financingInterestRateApplied * 100).toFixed(2)}%</strong></div>
-                    <div className="flex justify-between"><span>Monto Intereses Financiación:</span> <strong>{formatCurrency(calculatedValues.financingInterestAmount)}</strong></div>
-                    <div className="flex justify-between"><span>Total a Pagar (Financiado):</span> <strong>{formatCurrency(calculatedValues.totalAmountWithInterest)}</strong></div>
-                    <hr />
-                    <div className="flex justify-between text-lg"><span>Valor Cuota Mensual ({watchedFinancingPlan} meses):</span> <strong className="text-primary">{formatCurrency(calculatedValues.monthlyInstallment)}</strong></div>
-                  </CardContent>
-                </Card>
-              )}
-               {(watchedContractValue === 0 || watchedContractValue === undefined) && Number(watchedFinancingPlan) === 0 && (
-                  <FormField control={clientDetailsForm.control} name="paymentAmount" render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Monto del Pago Recurrente Mensual</FormLabel>
-                       <FormControl>
-                        <Input
-                          type="number" step="0.01" placeholder="50000"
-                          value={field.value === undefined || field.value === null || isNaN(Number(field.value)) ? "" : String(field.value)}
-                          onChange={e => field.onChange(e.target.value === "" ? undefined : parseFloat(e.target.value))}
-                        />
-                      </FormControl>
-                      <FormDescription>Si es un servicio recurrente sin valor de contrato ni financiación, ingrese el monto aquí.</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )} />
-               )}
-
-
-              <FormField control={clientDetailsForm.control} name="paymentDayOfMonth" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Día Preferido de Pago de la Cuota (1-31)</FormLabel>
-                  <FormControl>
-                    <Input type="number" min="1" max="31" placeholder="1"
-                      value={field.value === undefined || isNaN(Number(field.value)) ? "" : String(field.value)}
-                      onChange={e => field.onChange(e.target.value === "" ? undefined : parseInt(e.target.value, 10))}
+                    <FileInputField
+                        id="acceptanceLetter-public-input"
+                        label="Carta de Aceptación (PDF, JPG, PNG)"
+                        fileState={acceptanceLetterState}
+                        onFileChange={(file) => handleFileUpload(file, 'acceptanceLetter', setAcceptanceLetterState)}
+                        disabled={isSubmittingDetails || acceptanceLetterState.isUploading}
                     />
-                  </FormControl>
-                  <FormDescription>Día del mes en que se generará el cobro de la cuota.</FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )} />
+                </CardContent>
+              </Card>
 
-              <div className="flex justify-end gap-2 pt-4">
-                <Button type="submit" className="w-full" disabled={clientDetailsForm.formState.isSubmitting}>
-                  {clientDetailsForm.formState.isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : 'Registrar Información del Cliente'}
-                </Button>
-              </div>
+              <Button type="submit" className="w-full" disabled={isSubmittingDetails || acceptanceLetterState.isUploading || contractFileState.isUploading}>
+                {isSubmittingDetails && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Registrar Información del Cliente
+              </Button>
             </form>
           </Form>
         )}
@@ -416,5 +445,3 @@ export function ClientSelfRegistrationForm() {
     </Card>
   );
 }
-
-    

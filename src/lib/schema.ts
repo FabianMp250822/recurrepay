@@ -65,17 +65,24 @@ export const registrationSchema = z.object({
 
 
 export const publicClientSchema = z.object({
-  // El email vendrá del usuario autenticado, no necesita estar aquí para validación de este formulario
+  // El email se tomará del usuario autenticado
   firstName: z.string().min(1, { message: "El nombre es obligatorio." }).max(50, { message: "El nombre debe tener 50 caracteres o menos." }),
   lastName: z.string().min(1, { message: "El apellido es obligatorio." }).max(50, { message: "El apellido debe tener 50 caracteres o menos." }),
   phoneNumber: z.string().min(7, { message: "El número de teléfono debe tener al menos 7 dígitos." }).max(15, { message: "El número de teléfono debe tener 15 dígitos o menos." }).regex(/^\+?[0-9\s-()]+$/, { message: "Formato de número de teléfono inválido."}),
   contractValue: z.preprocess(
-    (val) => (val === "" || val === null || val === undefined ? 0 : parseFloat(String(val))), // Default to 0 if empty
+    (val) => (val === "" || val === null || val === undefined ? 0 : parseFloat(String(val))), 
     z.number().min(0, "El valor del contrato debe ser un número positivo o cero.")
   ),
   financingPlan: z.coerce.number({invalid_type_error: "Debe seleccionar un plan de financiación."})
     .refine(val => typeof val === 'number', { message: "Seleccione un plan de financiación válido."}), 
   paymentDayOfMonth: z.coerce.number().int().min(1, { message: "El día debe estar entre 1 y 31." }).max(31, { message: "El día debe estar entre 1 y 31." }),
+  
+  // Nuevos campos opcionales para los documentos
+  acceptanceLetterUrl: z.string().url("URL inválida para carta de aceptación.").optional().or(z.literal('')),
+  acceptanceLetterFileName: z.string().max(100, "Nombre de archivo muy largo.").optional().or(z.literal('')),
+  contractFileUrl: z.string().url("URL inválida para contrato.").optional().or(z.literal('')),
+  contractFileName: z.string().max(100, "Nombre de archivo muy largo.").optional().or(z.literal('')),
+
 }).refine(data => {
   if (data.contractValue > 0 && data.financingPlan === undefined) {
     return false; 
