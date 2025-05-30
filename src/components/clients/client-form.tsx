@@ -23,7 +23,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Progress } from "@/components/ui/progress";
-import { Switch } from "@/components/ui/switch"; // Import Switch
+import { Switch } from "@/components/ui/switch";
 import { useToast } from '@/hooks/use-toast';
 import { clientSchema } from '@/lib/schema';
 import type { Client, ClientFormData } from '@/types';
@@ -79,6 +79,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
   
   const [acceptanceLetterState, setAcceptanceLetterState] = useState<FileUploadState>({...initialFileUploadState, url: client?.acceptanceLetterUrl || null, name: client?.acceptanceLetterFileName || null });
   const [contractFileState, setContractFileState] = useState<FileUploadState>({...initialFileUploadState, url: client?.contractFileUrl || null, name: client?.contractFileName || null});
+  
   const [financingOptions, setFinancingOptions] = useState<FinancingOptionsMapType>({});
   const [isLoadingFinancingOptions, setIsLoadingFinancingOptions] = useState(true);
 
@@ -101,7 +102,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
       email: client?.email || '',
       phoneNumber: client?.phoneNumber || '',
       contractValue: client?.contractValue ?? undefined,
-      applyIva: client?.applyIva === undefined ? true : client.applyIva, // Default to true
+      applyIva: client?.applyIva === undefined ? true : client.applyIva,
       downPaymentPercentage: client?.downPaymentPercentage ?? undefined,
       paymentMethod: client?.paymentMethod || PAYMENT_METHODS[0],
       financingPlan: client?.financingPlan ?? 0,
@@ -117,7 +118,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
   const watchedContractValue = form.watch('contractValue');
   const watchedDownPaymentPercentage = form.watch('downPaymentPercentage');
   const watchedFinancingPlan = form.watch('financingPlan');
-  const watchedApplyIva = form.watch('applyIva'); // Watch the new applyIva field
+  const watchedApplyIva = form.watch('applyIva');
 
   const isContractValueBelowThreshold = (watchedContractValue ?? 0) < CONTRACT_VALUE_THRESHOLD;
 
@@ -158,7 +159,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
     const contractValRaw = form.getValues('contractValue');
     const downPaymentPercRaw = form.getValues('downPaymentPercentage');
     const financingPlanKeyRaw = form.getValues('financingPlan');
-    const applyIvaFlag = form.getValues('applyIva') ?? true; // Default to true
+    const applyIvaFlag = form.getValues('applyIva') ?? true;
 
     let cv = typeof contractValRaw === 'number' ? contractValRaw : 0;
     let dpPerc = typeof downPaymentPercRaw === 'number' ? downPaymentPercRaw : 0;
@@ -168,13 +169,10 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
       financingPlanKey = 0;
       dpPerc = 0;
     } else { 
-      if (dpPerc !==0 && dpPerc < MIN_DOWN_PAYMENT_PERCENTAGE_LARGE_CONTRACT) {
-        // Zod will handle the validation error if dpPerc is between 1 and 19.
-        // For calculation, we proceed with the user's value, Zod catches it.
-      }
+      // For contracts >= threshold, Zod handles the 20% min if dpPerc is not 0.
     }
 
-    const currentIvaRate = applyIvaFlag && cv > 0 ? IVA_RATE : 0; // Apply IVA only if flag is true and contract value exists
+    const currentIvaRate = applyIvaFlag && cv > 0 ? IVA_RATE : 0;
     const ivaAmount = cv * currentIvaRate;
     const totalWithIva = cv + ivaAmount;
     const calculatedDownPayment = totalWithIva * (dpPerc / 100);
@@ -187,8 +185,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
     let finalPaymentAmountForForm = form.getValues('paymentAmount');
 
     if (cv < CONTRACT_VALUE_THRESHOLD && cv > 0) {
-      financingPlanKey = 0; 
-      dpPerc = 0; 
+      // financingPlanKey and dpPerc are already 0 for this case
       monthlyInstallment = totalWithIva; 
       finalPaymentAmountForForm = totalWithIva;
       form.setValue('paymentAmount', parseFloat(totalWithIva.toFixed(2)), { shouldValidate: true });
@@ -201,22 +198,19 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
       monthlyInstallment = numberOfMonths > 0 ? parseFloat((totalAmountWithInterest / numberOfMonths).toFixed(2)) : 0;
       finalPaymentAmountForForm = monthlyInstallment;
       form.setValue('paymentAmount', monthlyInstallment, { shouldValidate: true });
-    } else if (financingPlanKey === 0 && cv > 0) {
-      if (dpPerc === 100) {
+    } else if (financingPlanKey === 0 && cv > 0) { // Contract >= threshold, no financing
+      if (dpPerc === 100) { // Fully paid by down payment
         finalPaymentAmountForForm = 0;
         form.setValue('paymentAmount', 0, { shouldValidate: true });
-      } else if (amountToFinance > 0 && (form.getValues('paymentAmount') === undefined || form.getValues('paymentAmount') === 0) ) {
-        // If there's an amount to finance and no payment amount is set, it implies a single payment of the remainder
-        // This scenario might need more clarification. For now, if no financing plan, paymentAmount is user-driven unless 100% DP.
-        // Or, if we want to enforce that if no financing, paymentAmount = amountToFinance:
-        // finalPaymentAmountForForm = amountToFinance;
-        // form.setValue('paymentAmount', parseFloat(amountToFinance.toFixed(2)), { shouldValidate: true });
+      } else if (amountToFinance > 0 && (form.getValues('paymentAmount') === undefined || form.getValues('paymentAmount') === 0 || form.getValues('paymentAmount') !== amountToFinance) ) {
+         // If there's an amountToFinance and no financing plan, paymentAmount is user-driven for recurring service OR should be amountToFinance for single payment.
+         // Zod schema expects paymentAmount > 0 if contract >= 1M, no financing, and not 100% DP.
+         // The current form logic doesn't auto-set paymentAmount to amountToFinance here. It allows user input.
       }
       monthlyInstallment = 0; 
-    } else if (cv === 0) {
+    } else if (cv === 0) { // No contract value (pure service)
         monthlyInstallment = 0;
-        // For services without contract value, paymentAmount is user-defined.
-        // Zod schema ensures it's > 0 if no contract.
+        // Zod schema ensures paymentAmount > 0 if no contract value.
     }
 
 
@@ -304,27 +298,29 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
     setIsSubmitting(true);
 
     let finalContractValue = values.contractValue ?? 0;
-    let finalPaymentAmount = values.paymentAmount; // Start with form value
+    let finalPaymentAmount = values.paymentAmount; 
     const finalApplyIva = values.applyIva ?? true;
+    let finalFinancingPlan = values.financingPlan ?? 0;
+    let finalDownPaymentPercentage = values.downPaymentPercentage ?? 0;
 
     if (finalContractValue < CONTRACT_VALUE_THRESHOLD && finalContractValue > 0) {
         const ivaRateForCalc = finalApplyIva ? IVA_RATE : 0;
         const iva = finalContractValue * ivaRateForCalc;
         finalPaymentAmount = finalContractValue + iva;
+        finalFinancingPlan = 0;
+        finalDownPaymentPercentage = 0;
     } else if (values.financingPlan && values.financingPlan !== 0 && finalContractValue > 0 && Object.keys(financingOptions).length > 0) {
         finalPaymentAmount = parseFloat(calculatedValues.monthlyInstallment.toFixed(2));
-    } else if (finalContractValue > 0 && values.financingPlan === 0 && (values.downPaymentPercentage ?? 0) === 100) {
-        finalPaymentAmount = 0; // Fully paid by down payment
+    } else if (finalContractValue > 0 && finalFinancingPlan === 0 && finalDownPaymentPercentage === 100) {
+        finalPaymentAmount = 0;
     }
-    // If no contract and no financing, paymentAmount comes from user input (validated by Zod to be >0).
-    // If contract >= 1M and no financing, and not 100% DP, paymentAmount is user-defined or might be totalAfterDownPayment. Zod handles if it's missing or <=0.
-
+    
     const dataToSubmit: ClientFormData = {
       ...values,
       contractValue: finalContractValue,
       applyIva: finalApplyIva,
-      downPaymentPercentage: finalContractValue < CONTRACT_VALUE_THRESHOLD ? 0 : (values.downPaymentPercentage ?? 0),
-      financingPlan: finalContractValue < CONTRACT_VALUE_THRESHOLD ? 0 : (values.financingPlan ?? 0),
+      downPaymentPercentage: finalDownPaymentPercentage,
+      financingPlan: finalFinancingPlan,
       paymentAmount: finalPaymentAmount, 
       acceptanceLetterUrl: acceptanceLetterState.url || values.acceptanceLetterUrl,
       acceptanceLetterFileName: acceptanceLetterState.name || values.acceptanceLetterFileName,
@@ -378,7 +374,7 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
     placeholder: string, 
     description?: string,
     disabled: boolean = false,
-    min?: number // Added min prop
+    min?: number
   ) => (
     <FormField
       control={form.control}
@@ -390,9 +386,9 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
             <Input
               type="number"
               step={name === "downPaymentPercentage" ? "1" : "0.01"}
-              min={min !== undefined ? min : (name === "paymentAmount" ? "0" : "0.01")}
+              min={min !== undefined ? min : (name === "paymentAmount" && (watchedContractValue ?? 0) === 0 ? 0.01 : 0)} // Allow 0 for paymentAmount if contract exists
               placeholder={placeholder}
-              value={String(field.value ?? "")} // Ensure value is always a string
+              value={String(field.value ?? "")}
               onChange={e => {
                 const val = e.target.value;
                 if (val === "") {
@@ -494,7 +490,7 @@ const FileInputField = ({
             <Card>
               <CardHeader><CardTitle className="text-xl">Información del Contrato y Financiación</CardTitle></CardHeader>
               <CardContent className="space-y-6">
-                {renderNumberInput("contractValue", "Valor del Contrato", "1000000", undefined, false, 0.01)}
+                {renderNumberInput("contractValue", "Valor del Contrato", "1000000", undefined, false, 0)}
                 
                 <FormField
                   control={form.control}
@@ -509,7 +505,7 @@ const FileInputField = ({
                       </div>
                       <FormControl>
                         <Switch
-                          checked={field.value}
+                          checked={field.value ?? true}
                           onCheckedChange={field.onChange}
                           disabled={isSubmitting}
                         />
@@ -524,9 +520,9 @@ const FileInputField = ({
                   isContractValueBelowThreshold ? "0" : String(MIN_DOWN_PAYMENT_PERCENTAGE_LARGE_CONTRACT), 
                   isContractValueBelowThreshold 
                     ? "No se acepta abono para contratos menores a $1,000,000."
-                    : `Ingrese 0 si no hay abono, o un valor entre ${MIN_DOWN_PAYMENT_PERCENTAGE_LARGE_CONTRACT} y 100 para contratos >= $1,000,000.`,
+                    : `Para contratos >= $1,000,000: ingrese 0% o un valor entre ${MIN_DOWN_PAYMENT_PERCENTAGE_LARGE_CONTRACT}% y 100%.`,
                   isContractValueBelowThreshold,
-                  0 // min value for the input field itself
+                  0
                 )}
                 
                 <FormField control={form.control} name="paymentMethod" render={({ field }) => (
@@ -540,7 +536,7 @@ const FileInputField = ({
                         <FormLabel>Plan de Financiación</FormLabel>
                         <Select 
                             onValueChange={(value) => field.onChange(Number(value))} 
-                            value={String(field.value)}
+                            value={String(field.value ?? '0')}
                             disabled={isLoadingFinancingOptions || isContractValueBelowThreshold}
                         >
                         <FormControl><SelectTrigger><SelectValue placeholder="Seleccione un plan" /></SelectTrigger></FormControl>
@@ -548,9 +544,12 @@ const FileInputField = ({
                             {isLoadingFinancingOptions ? (
                                 <SelectItem value="loading" disabled>Cargando planes...</SelectItem>
                             ) : Object.keys(financingOptions).length > 0 ? 
-                                Object.entries(financingOptions).map(([key, option]) => (<SelectItem key={key} value={key}>{option.label} {key !== "0" && option.rate > 0 ? `(${(option.rate * 100).toFixed(0)}% interés aprox.)` : ''}</SelectItem>))
-                                : <SelectItem value="0" disabled>No hay planes configurados.</SelectItem>}
-                             <SelectItem value="0">Sin financiación</SelectItem>
+                                Object.entries(financingOptions).map(([key, option]) => (
+                                    <SelectItem key={key} value={key}>
+                                        {option.label} {key !== "0" && option.rate > 0 ? `(${(option.rate * 100).toFixed(0)}% interés aprox.)` : ''}
+                                    </SelectItem>
+                                ))
+                                : <SelectItem value="0" disabled>No hay planes configurados o no se pudieron cargar.</SelectItem>}
                         </SelectContent>
                         </Select>
                         <FormDescription>
@@ -575,7 +574,7 @@ const FileInputField = ({
                   {!isContractValueBelowThreshold && <div className="flex justify-between"><span>Abono ({form.getValues('downPaymentPercentage') || 0}% del Total { (form.getValues('applyIva') ?? true) ? 'con IVA' : 'Contrato' }):</span> <strong>{formatCurrency(calculatedValues.calculatedDownPayment)}</strong></div>}
                   <hr/>
                   <div className="flex justify-between"><span>Saldo a {isContractValueBelowThreshold ? 'Pagar (Total)' : 'Financiar'}:</span> <strong className="text-base">{formatCurrency(calculatedValues.amountToFinance)}</strong></div>
-                  {!isContractValueBelowThreshold && watchedFinancingPlan !== 0 && (
+                  {!isContractValueBelowThreshold && (form.getValues('financingPlan') ?? 0) !== 0 && (
                     <>
                       <div className="flex justify-between"><span>Tasa Interés Aplicada:</span> <strong>{(calculatedValues.financingInterestRateApplied * 100).toFixed(2)}%</strong></div>
                       <div className="flex justify-between"><span>Monto Intereses Financiación:</span> <strong>{formatCurrency(calculatedValues.financingInterestAmount)}</strong></div>
@@ -584,11 +583,11 @@ const FileInputField = ({
                   )}
                   <hr/>
                   <div className="flex justify-between text-lg">
-                    <span>{isContractValueBelowThreshold ? 'Monto Total a Pagar (Pago Único):' : (watchedFinancingPlan !== 0 ? `Valor Cuota Mensual (${watchedFinancingPlan} meses):` : 'Monto de Pago (según configuración):')}</span> 
+                    <span>{isContractValueBelowThreshold ? 'Monto Total a Pagar (Pago Único):' : ((form.getValues('financingPlan') ?? 0) !== 0 ? `Valor Cuota Mensual (${form.getValues('financingPlan')} meses):` : 'Monto de Pago (según configuración):')}</span> 
                     <strong className="text-primary">
                         {isContractValueBelowThreshold 
                             ? formatCurrency(calculatedValues.totalWithIva)
-                            : (watchedFinancingPlan !== 0 ? formatCurrency(calculatedValues.monthlyInstallment) : formatCurrency(form.getValues('paymentAmount') ?? 0))
+                            : ((form.getValues('financingPlan') ?? 0) !== 0 ? formatCurrency(calculatedValues.monthlyInstallment) : formatCurrency(form.getValues('paymentAmount') ?? 0))
                         }
                     </strong>
                   </div>
@@ -602,7 +601,7 @@ const FileInputField = ({
                 <FormField control={form.control} name="paymentDayOfMonth" render={({ field }) => (
                     <FormItem><FormLabel>Día de Pago de la Cuota del Mes</FormLabel>
                         <FormControl><Input type="number" min="1" max="31" placeholder="15" 
-                            value={String(field.value ?? "")} // Ensure value is always a string
+                            value={String(field.value ?? "")}
                             onChange={e => {
                               const val = e.target.value;
                               if (val === "") {
@@ -618,13 +617,13 @@ const FileInputField = ({
                 />
                 {renderNumberInput(
                   "paymentAmount", 
-                  isContractValueBelowThreshold ? "Monto Total del Contrato (calculado)" : (watchedFinancingPlan !== 0 && (watchedContractValue ?? 0) > 0 ? "Cuota Mensual (calculada)" : "Monto de Pago Recurrente"), 
+                  isContractValueBelowThreshold ? "Monto Total del Contrato (calculado)" : ((form.getValues('financingPlan') ?? 0) !== 0 && (watchedContractValue ?? 0) > 0 ? "Cuota Mensual (calculada)" : "Monto de Pago Recurrente"), 
                   "50000", 
-                  (isContractValueBelowThreshold || (watchedFinancingPlan !== 0 && (watchedContractValue ?? 0) > 0)) 
+                  (isContractValueBelowThreshold || ((form.getValues('financingPlan') ?? 0) !== 0 && (watchedContractValue ?? 0) > 0)) 
                     ? "Este valor es calculado automáticamente." 
                     : "Si no hay financiación o contrato, ingrese el monto del servicio recurrente. Si hay contrato sin financiación y no es 100% abonado, ingrese el saldo a pagar o la cuota de servicio.",
-                  (isContractValueBelowThreshold || (watchedFinancingPlan !== 0 && (watchedContractValue ?? 0) > 0)), // disabled if calculated
-                  0 // min value
+                  (isContractValueBelowThreshold || ((form.getValues('financingPlan') ?? 0) !== 0 && (watchedContractValue ?? 0) > 0)),
+                  0
                 )}
               </CardContent>
             </Card>
@@ -666,4 +665,3 @@ const FileInputField = ({
     </Card>
   );
 }
-
