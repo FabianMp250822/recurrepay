@@ -1,6 +1,6 @@
 
 import type { Client, PaymentRecord, AppFinancingSettings, AppGeneralSettings } from '@/types';
-import { db } from '@/lib/firebase'; // Client SDK for ALL operations now
+import { db } from '@/lib/firebase'; 
 import {
   collection,
   getDocs,
@@ -15,6 +15,7 @@ import {
   Timestamp,
   setDoc
 } from 'firebase/firestore';
+import { DEFAULT_FINANCING_OPTIONS } from './constants'; // Import default options
 
 const CLIENTS_COLLECTION = 'listapagospendiendes';
 const PAYMENT_HISTORY_SUBCOLLECTION = 'paymentHistory';
@@ -38,7 +39,6 @@ export async function getClients(): Promise<Client[]> {
   } catch (error: any) {
     console.error("Error fetching clients from Firestore (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     if (error.code === 'permission-denied') {
-      // This will make the error more specific when it propagates
       throw new Error("Permiso denegado por Firestore al buscar clientes. Verifique las reglas de seguridad y que los datos del administrador (UID y campo 'activo') sean correctos en la colección 'administradores'.");
     }
     throw new Error(`Error al buscar clientes de Firestore: ${error.message || 'Error desconocido de Firestore'}. Código: ${error.code || 'N/A'}`);
@@ -62,6 +62,23 @@ export async function getClientById(id: string): Promise<Client | undefined> {
   }
 }
 
+export async function getClientByEmail(email: string): Promise<Client | undefined> {
+  try {
+    const clientsCollectionRef = collection(db, CLIENTS_COLLECTION);
+    const q = query(clientsCollectionRef, where('email', '==', email));
+    const querySnapshot = await getDocs(q);
+    if (!querySnapshot.empty) {
+      const docSnap = querySnapshot.docs[0];
+      return { id: docSnap.id, ...(docSnap.data() as Omit<Client, 'id'>) };
+    }
+    return undefined;
+  } catch (error: any) {
+    console.error("Error fetching client by email from Firestore (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    // No lanzar error de permiso aquí, solo devolver undefined
+    return undefined;
+  }
+}
+
 
 export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ client?: Client, error?: string }> {
   if (!db) {
@@ -71,11 +88,13 @@ export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ clien
   try {
     const clientsCollectionRef = collection(db, CLIENTS_COLLECTION);
     
-    const emailQuery = query(clientsCollectionRef, where('email', '==', clientData.email));
-    const emailQuerySnapshot = await getDocs(emailQuery);
-    if (!emailQuerySnapshot.empty) {
-      return { error: "La dirección de correo electrónico ya existe para otro cliente." };
-    }
+    // Email uniqueness check should ideally be done before calling addClient if it's a user-facing error.
+    // If addClient is called internally after checks, this might be redundant or a failsafe.
+    // const emailQuery = query(clientsCollectionRef, where('email', '==', clientData.email));
+    // const emailQuerySnapshot = await getDocs(emailQuery);
+    // if (!emailQuerySnapshot.empty) {
+    //   return { error: "La dirección de correo electrónico ya existe para otro cliente." };
+    // }
 
     const dataToSave = {
         ...clientData,
@@ -84,7 +103,7 @@ export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ clien
         createdAt: clientData.createdAt || Timestamp.now().toDate().toISOString() 
     };
     
-    Object.keys(dataToSave).forEach(key => dataToSave[key as keyof typeof dataToSave] === undefined && delete dataToSave[key as keyof typeof dataToSave]);
+    Object.keys(dataToSave).forEach(key => (dataToSave as any)[key] === undefined && delete (dataToSave as any)[key]);
 
     const docRef = await addDoc(clientsCollectionRef, dataToSave);
     return { client: { id: docRef.id, ...dataToSave } as Client };
@@ -129,7 +148,8 @@ export async function updateClient(id: string, clientData: Partial<Omit<Client, 
     }
     
     const dataToUpdate: Partial<Omit<Client, 'id' | 'createdAt'>> = { ...clientData };
-    Object.keys(dataToUpdate).forEach(key => dataToUpdate[key as keyof typeof dataToUpdate] === undefined && delete dataToUpdate[key as keyof typeof dataToUpdate]);
+    Object.keys(dataToUpdate).forEach(key => (dataToUpdate as any)[key] === undefined && delete (dataToUpdate as any)[key]);
+
 
     await updateDoc(clientDocRef, dataToUpdate);
     
@@ -138,7 +158,8 @@ export async function updateClient(id: string, clientData: Partial<Omit<Client, 
 
     return { client: updatedClient };
 
-  } catch (error: any) {
+  } catch (error: any)
+ {
     console.error("Error updating client in Firestore (Client SDK) (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     let userMessage = "Error al actualizar el cliente. Inténtelo de nuevo.";
     if (error.code === 'permission-denied') {
@@ -225,34 +246,45 @@ export async function getPaymentHistory(clientId: string): Promise<PaymentRecord
 
 // --- App Settings Operations ---
 
-const defaultFinancingPlans: AppFinancingSettings = {
-  plans: [
-    { months: 0, label: "Sin financiación", rate: 0, isDefault: true, isConfigurable: false },
-    { months: 3, label: "3 meses", rate: 0.05, isConfigurable: true },
-    { months: 6, label: "6 meses", rate: 0.08, isConfigurable: true },
-    { months: 9, label: "9 meses", rate: 0.10, isConfigurable: true },
-    { months: 12, label: "12 meses", rate: 0.12, isConfigurable: true },
-  ]
+const defaultFinancingPlansData: AppFinancingSettings = {
+  plans: DEFAULT_FINANCING_OPTIONS, // Use the imported defaults
 };
 
 export async function getFinancingPlanSettings(): Promise<AppFinancingSettings> {
   if (!db) {
     console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in getFinancingPlanSettings. Returning default plans.");
-    return defaultFinancingPlans;
+    return defaultFinancingPlansData;
   }
   try {
     const settingsDocRef = doc(db, APP_SETTINGS_COLLECTION, FINANCING_PLANS_DOC_ID);
     const docSnap = await getDoc(settingsDocRef);
     if (docSnap.exists()) {
       const data = docSnap.data() as AppFinancingSettings;
-      const mergedPlans = defaultFinancingPlans.plans.map(defaultPlan => {
-        const existingPlan = data.plans?.find(p => p.months === defaultPlan.months);
-        return existingPlan ? { ...defaultPlan, ...existingPlan, isConfigurable: defaultPlan.isConfigurable } : defaultPlan;
+      // Merge with defaults to ensure all base plans are present and configurable flags are respected
+      const defaultPlansMap = defaultFinancingPlansData.plans.reduce((map, plan) => {
+        map[plan.months] = plan;
+        return map;
+      }, {} as {[key: number]: typeof defaultFinancingPlansData.plans[0]});
+
+      const mergedPlans = data.plans?.map(dbPlan => ({
+        ...defaultPlansMap[dbPlan.months], // Start with default structure (especially isConfigurable)
+        ...dbPlan, // Override with DB values like rate and label
+      })) || defaultFinancingPlansData.plans;
+      
+      // Ensure all default plans are included if not in DB, respecting their non-configurable nature
+      defaultFinancingPlansData.plans.forEach(defaultPlan => {
+        if (!mergedPlans.find(p => p.months === defaultPlan.months)) {
+          mergedPlans.push(defaultPlan);
+        }
       });
+      
+      // Sort by months
+      mergedPlans.sort((a, b) => a.months - b.months);
+
       return { plans: mergedPlans };
     } else {
-      await setDoc(settingsDocRef, defaultFinancingPlans);
-      return defaultFinancingPlans;
+      await setDoc(settingsDocRef, defaultFinancingPlansData);
+      return defaultFinancingPlansData;
     }
   } catch (error: any) {
     console.error("Error fetching financing plan settings from Firestore:", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
@@ -260,7 +292,7 @@ export async function getFinancingPlanSettings(): Promise<AppFinancingSettings> 
       throw new Error("Permiso denegado por Firestore al obtener la configuración de planes de financiación.");
     }
     console.warn("Falling back to default financing plans due to error.");
-    return defaultFinancingPlans;
+    return defaultFinancingPlansData;
   }
 }
 
@@ -298,11 +330,11 @@ const defaultGeneralSettings: AppGeneralSettings = {
   appName: "RecurPay",
   appLogoUrl: "",
   notificationsEnabled: false,
-  themePrimary: "207 88% 68%", // Default HSL for --primary
-  themeSecondary: "207 88% 88%", // Default HSL for --secondary
-  themeAccent: "124 39% 64%", // Default HSL for --accent
-  themeBackground: "207 88% 94%", // Default HSL for --background
-  themeForeground: "210 40% 25%", // Default HSL for --foreground
+  themePrimary: "207 88% 68%", 
+  themeSecondary: "207 88% 88%", 
+  themeAccent: "124 39% 64%", 
+  themeBackground: "207 88% 94%", 
+  themeForeground: "210 40% 25%", 
 };
 
 export async function getGeneralSettings(): Promise<AppGeneralSettings> {
@@ -314,7 +346,6 @@ export async function getGeneralSettings(): Promise<AppGeneralSettings> {
     const settingsDocRef = doc(db, APP_SETTINGS_COLLECTION, GENERAL_SETTINGS_DOC_ID);
     const docSnap = await getDoc(settingsDocRef);
     if (docSnap.exists()) {
-      // Merge fetched data with defaults to ensure all keys are present
       const fetchedData = docSnap.data();
       return { ...defaultGeneralSettings, ...fetchedData } as AppGeneralSettings;
     } else {
@@ -349,7 +380,6 @@ export async function saveGeneralSettings(settings: Partial<AppGeneralSettings>)
         themeBackground: settings.themeBackground !== undefined ? settings.themeBackground : defaultGeneralSettings.themeBackground,
         themeForeground: settings.themeForeground !== undefined ? settings.themeForeground : defaultGeneralSettings.themeForeground,
     };
-    // Remove any undefined properties from settingsToSave to avoid Firestore errors with undefined values
     Object.keys(settingsToSave).forEach(key => (settingsToSave as any)[key] === undefined && delete (settingsToSave as any)[key]);
 
     await setDoc(settingsDocRef, settingsToSave, { merge: true });

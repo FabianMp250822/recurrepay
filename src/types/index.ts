@@ -1,5 +1,8 @@
 
 import type { User as FirebaseUser } from 'firebase/auth';
+import type { z } from 'zod';
+import type { publicClientSchema } from '@/lib/schema';
+
 
 export interface PaymentRecord {
   id: string;
@@ -17,73 +20,69 @@ export interface Client {
   email: string;
   phoneNumber: string;
 
-  // Campos de financiación y contrato
-  contractValue?: number; // Valor del contrato antes de IVA
-  ivaRate?: number; // Tasa de IVA aplicada (ej: 0.19)
-  ivaAmount?: number; // Monto de IVA calculado
-  totalWithIva?: number; // contractValue + ivaAmount
+  contractValue?: number; 
+  ivaRate?: number; 
+  ivaAmount?: number; 
+  totalWithIva?: number; 
 
-  downPaymentPercentage?: number; // Porcentaje de abono ingresado por el usuario
-  downPayment?: number; // Abono inicial (calculado monetariamente)
+  downPaymentPercentage?: number; 
+  downPayment?: number; 
   
-  amountToFinance?: number; // totalWithIva - downPayment
+  amountToFinance?: number; 
   
-  paymentMethod?: string; // Medio de pago del contrato/abono inicial
-  financingPlan?: number; // Meses del plan (0, 3, 6, 9, 12)
-  financingInterestRateApplied?: number; // Tasa de interés del plan aplicada
-  financingInterestAmount?: number; // Monto de interés por financiación
-  totalAmountWithInterest?: number; // amountToFinance + financingInterestAmount
+  paymentMethod?: string; 
+  financingPlan?: number; 
+  financingInterestRateApplied?: number; 
+  financingInterestAmount?: number; 
+  totalAmountWithInterest?: number; 
 
-  paymentAmount: number; // Cuota Mensual Calculada (o monto recurrente si no hay financiación)
-  paymentDayOfMonth: number; // Día del mes para el pago de la cuota
+  paymentAmount: number; 
+  paymentDayOfMonth: number; 
   
-  nextPaymentDate: string; // Store as ISO string
-  createdAt: string; // Store as ISO string
+  nextPaymentDate: string; 
+  createdAt: string; 
 
-  // File uploads
   acceptanceLetterUrl?: string;
   acceptanceLetterFileName?: string;
   contractFileUrl?: string;
   contractFileName?: string;
 
-  // Payment tracking
-  paymentsMadeCount?: number; // Number of installments paid for a financing plan
-  status?: 'active' | 'completed' | 'defaulted'; // Status of the client/contract
+  paymentsMadeCount?: number; 
+  status?: 'active' | 'completed' | 'defaulted' | 'pending_approval'; // Added 'pending_approval'
 }
 
-// FormData para los campos que el usuario ingresa directamente en el formulario
 export type ClientFormData = {
   firstName: string;
   lastName: string;
   email: string;
   phoneNumber: string;
   contractValue?: number;
-  downPaymentPercentage?: number; // Usuario ingresa porcentaje
+  downPaymentPercentage?: number; 
   paymentMethod?: string;
-  financingPlan?: number; // 0, 3, 6, 9, 12
+  financingPlan?: number; 
   paymentDayOfMonth: number;
-  paymentAmount?: number; // Monto de pago recurrente (si no hay financiación)
+  paymentAmount?: number; 
 
-  // File objects (not directly part of schema for submission, handled separately)
   acceptanceLetterFile?: File | null;
   contractFileFile?: File | null;
 
-  // URLs (passed to server action after upload)
   acceptanceLetterUrl?: string;
   acceptanceLetterFileName?: string;
   contractFileUrl?: string;
   contractFileName?: string;
 };
 
+export type PublicClientFormData = z.infer<typeof publicClientSchema>;
+
+
 export type AppUser = FirebaseUser;
 
-// Settings
 export interface FinancingPlanSetting {
   months: number;
   label: string;
-  rate: number; // Interest rate (e.g., 0.05 for 5%)
-  isDefault?: boolean; // To identify the "Sin financiación" option
-  isConfigurable?: boolean; // To identify if the rate can be configured in UI
+  rate: number; 
+  isDefault?: boolean; 
+  isConfigurable?: boolean; 
 }
 
 export interface AppFinancingSettings {
@@ -94,28 +93,18 @@ export interface AppGeneralSettings {
   appName?: string;
   appLogoUrl?: string;
   notificationsEnabled?: boolean;
-  // Theme colors (HSL components)
-  primaryColorH?: number;
-  primaryColorS?: number;
-  primaryColorL?: number;
-  secondaryColorH?: number;
-  secondaryColorS?: number;
-  secondaryColorL?: number;
-  // You can add more for accent, destructive, background, foreground, card, etc.
-  // For --primary, --secondary, --accent HSL values
-  themePrimary?: string; // e.g., "207 88% 68%"
-  themeSecondary?: string; // e.g., "207 88% 88%"
-  themeAccent?: string; // e.g., "124 39% 64%"
-  themeBackground?: string; // e.g., "207 88% 94%"
-  themeForeground?: string; // e.g., "210 40% 25%"
+  themePrimary?: string; 
+  themeSecondary?: string; 
+  themeAccent?: string; 
+  themeBackground?: string; 
+  themeForeground?: string; 
 }
 
 export type AppGeneralSettingsFormData = {
   appName?: string;
-  appLogoFile?: File | null; // For form handling
-  appLogoUrl?: string; // For storing/retrieving existing URL
+  appLogoFile?: File | null; 
+  appLogoUrl?: string; 
   notificationsEnabled?: boolean;
-  // Theme colors
   themePrimary?: string;
   themeSecondary?: string;
   themeAccent?: string;
