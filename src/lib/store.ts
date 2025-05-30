@@ -1,6 +1,6 @@
 
-import type { Client, PaymentRecord, AppFinancingSettings, AppGeneralSettings } from '@/types';
-import { db } from '@/lib/firebase'; 
+import type { Client, PaymentRecord, AppFinancingSettings, AppGeneralSettings, FinancingPlanSetting } from '@/types';
+import { db } from '@/lib/firebase';
 import {
   collection,
   getDocs,
@@ -15,13 +15,25 @@ import {
   Timestamp,
   setDoc
 } from 'firebase/firestore';
-import { DEFAULT_FINANCING_OPTIONS } from './constants'; // Import default options
+// DEFAULT_FINANCING_OPTIONS from constants.ts is an object, not directly used for this default structure anymore
+// We define the default AppFinancingSettings structure directly here.
 
 const CLIENTS_COLLECTION = 'listapagospendiendes';
 const PAYMENT_HISTORY_SUBCOLLECTION = 'paymentHistory';
 const APP_SETTINGS_COLLECTION = 'appSettings';
 const FINANCING_PLANS_DOC_ID = 'financingPlans';
-const GENERAL_SETTINGS_DOC_ID = 'generalSettings'; 
+const GENERAL_SETTINGS_DOC_ID = 'generalSettings';
+
+// Define defaultFinancingPlansData with a 'plans' array directly
+const defaultFinancingPlansData: AppFinancingSettings = {
+  plans: [
+    { months: 0, label: "Sin financiación", rate: 0, isDefault: true, isConfigurable: false },
+    { months: 3, label: "3 meses", rate: 0.05, isConfigurable: true },
+    { months: 6, label: "6 meses", rate: 0.08, isConfigurable: true },
+    { months: 9, label: "9 meses", rate: 0.10, isConfigurable: true },
+    { months: 12, label: "12 meses", rate: 0.12, isConfigurable: true },
+  ].sort((a, b) => a.months - b.months), // Ensure sorted
+};
 
 
 // --- Client Operations ---
@@ -74,7 +86,6 @@ export async function getClientByEmail(email: string): Promise<Client | undefine
     return undefined;
   } catch (error: any) {
     console.error("Error fetching client by email from Firestore (FULL ERROR OBJECT):", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
-    // No lanzar error de permiso aquí, solo devolver undefined
     return undefined;
   }
 }
@@ -88,19 +99,11 @@ export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ clien
   try {
     const clientsCollectionRef = collection(db, CLIENTS_COLLECTION);
     
-    // Email uniqueness check should ideally be done before calling addClient if it's a user-facing error.
-    // If addClient is called internally after checks, this might be redundant or a failsafe.
-    // const emailQuery = query(clientsCollectionRef, where('email', '==', clientData.email));
-    // const emailQuerySnapshot = await getDocs(emailQuery);
-    // if (!emailQuerySnapshot.empty) {
-    //   return { error: "La dirección de correo electrónico ya existe para otro cliente." };
-    // }
-
     const dataToSave = {
         ...clientData,
         paymentsMadeCount: clientData.paymentsMadeCount || 0,
         status: clientData.status || 'active',
-        createdAt: clientData.createdAt || Timestamp.now().toDate().toISOString() 
+        createdAt: clientData.createdAt || Timestamp.now().toDate().toISOString()
     };
     
     Object.keys(dataToSave).forEach(key => (dataToSave as any)[key] === undefined && delete (dataToSave as any)[key]);
@@ -205,7 +208,7 @@ export async function addPaymentToHistory(clientId: string, paymentData: Omit<Pa
     const historyCollectionRef = collection(db, CLIENTS_COLLECTION, clientId, PAYMENT_HISTORY_SUBCOLLECTION);
     const dataToSave = {
       ...paymentData,
-      recordedAt: Timestamp.now().toDate().toISOString(), 
+      recordedAt: Timestamp.now().toDate().toISOString(),
     };
     const docRef = await addDoc(historyCollectionRef, dataToSave);
     return { record: { id: docRef.id, ...dataToSave } };
@@ -239,16 +242,12 @@ export async function getPaymentHistory(clientId: string): Promise<PaymentRecord
     if (error.code === 'permission-denied') {
       throw new Error(`Permiso denegado por Firestore al buscar historial de pagos para el cliente ${clientId}. Verifique las reglas de seguridad.`);
     }
-    return []; 
+    return [];
   }
 }
 
 
 // --- App Settings Operations ---
-
-const defaultFinancingPlansData: AppFinancingSettings = {
-  plans: DEFAULT_FINANCING_OPTIONS, // Use the imported defaults
-};
 
 export async function getFinancingPlanSettings(): Promise<AppFinancingSettings> {
   if (!db) {
@@ -259,30 +258,44 @@ export async function getFinancingPlanSettings(): Promise<AppFinancingSettings> 
     const settingsDocRef = doc(db, APP_SETTINGS_COLLECTION, FINANCING_PLANS_DOC_ID);
     const docSnap = await getDoc(settingsDocRef);
     if (docSnap.exists()) {
-      const data = docSnap.data() as AppFinancingSettings;
-      // Merge with defaults to ensure all base plans are present and configurable flags are respected
+      const dataFromDb = docSnap.data() as Partial<AppFinancingSettings>; // Data from DB might be partial or malformed
+      
+      // Ensure dataFromDb.plans is an array before trying to use array methods on it
+      const dbPlansArray = Array.isArray(dataFromDb.plans) ? dataFromDb.plans : [];
+
+      // Create a map of default plans for easy lookup and merging
       const defaultPlansMap = defaultFinancingPlansData.plans.reduce((map, plan) => {
         map[plan.months] = plan;
         return map;
-      }, {} as {[key: number]: typeof defaultFinancingPlansData.plans[0]});
+      }, {} as { [key: number]: FinancingPlanSetting });
 
-      const mergedPlans = data.plans?.map(dbPlan => ({
-        ...defaultPlansMap[dbPlan.months], // Start with default structure (especially isConfigurable)
-        ...dbPlan, // Override with DB values like rate and label
-      })) || defaultFinancingPlansData.plans;
-      
-      // Ensure all default plans are included if not in DB, respecting their non-configurable nature
-      defaultFinancingPlansData.plans.forEach(defaultPlan => {
-        if (!mergedPlans.find(p => p.months === defaultPlan.months)) {
-          mergedPlans.push(defaultPlan);
-        }
+      // Merge DB plans with defaults: prioritize DB values but ensure all default structure is there
+      const mergedPlans = defaultFinancingPlansData.plans.map(defaultPlan => {
+        const dbPlan = dbPlansArray.find(p => p.months === defaultPlan.months);
+        return {
+          ...defaultPlan, // Start with default structure (months, label, default rate, isConfigurable, isDefault)
+          ...(dbPlan || {}), // Override with DB values if they exist (label, rate primarily)
+        };
       });
       
-      // Sort by months
-      mergedPlans.sort((a, b) => a.months - b.months);
+      // Add any plans from DB that weren't in the defaults (e.g., custom plans added later)
+      // This part is tricky if DB plans don't have all fields, ensure they are valid FinancingPlanSetting
+      dbPlansArray.forEach(dbPlan => {
+        if (!mergedPlans.find(p => p.months === dbPlan.months)) {
+          // Ensure it has the basic structure, using defaults from a similar default plan if possible
+          // or some sane values if it's a completely new month key
+          const baseForNewLabel = defaultPlansMap[dbPlan.months] || { months: dbPlan.months, label: `Plan ${dbPlan.months}m`, rate: 0, isConfigurable: true };
+          mergedPlans.push({
+             ...baseForNewLabel,
+             ...dbPlan, // Override with what's in DB
+          });
+        }
+      });
 
+      mergedPlans.sort((a, b) => a.months - b.months);
       return { plans: mergedPlans };
     } else {
+      // If doc doesn't exist, create it with defaultFinancingPlansData (which has a 'plans' array)
       await setDoc(settingsDocRef, defaultFinancingPlansData);
       return defaultFinancingPlansData;
     }
@@ -292,7 +305,7 @@ export async function getFinancingPlanSettings(): Promise<AppFinancingSettings> 
       throw new Error("Permiso denegado por Firestore al obtener la configuración de planes de financiación.");
     }
     console.warn("Falling back to default financing plans due to error.");
-    return defaultFinancingPlansData;
+    return defaultFinancingPlansData; // This has a 'plans' array
   }
 }
 
@@ -303,7 +316,11 @@ export async function saveFinancingPlanSettings(settings: AppFinancingSettings):
   }
   try {
     const settingsDocRef = doc(db, APP_SETTINGS_COLLECTION, FINANCING_PLANS_DOC_ID);
-    await setDoc(settingsDocRef, settings, { merge: true }); 
+    // Ensure settings.plans is an array before saving
+    const dataToSave = {
+        plans: Array.isArray(settings.plans) ? settings.plans : defaultFinancingPlansData.plans
+    };
+    await setDoc(settingsDocRef, dataToSave, { merge: true });
     return { success: true };
   } catch (error: any) {
     console.error("Error saving financing plan settings to Firestore:", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
@@ -317,9 +334,18 @@ export async function saveFinancingPlanSettings(settings: AppFinancingSettings):
 
 export async function getFinancingOptionsMap(): Promise<{ [key: number]: { rate: number; label: string } }> {
     const settings = await getFinancingPlanSettings();
-    if (!settings || !settings.plans) return {};
+    // Ensure settings and settings.plans are valid before reducing
+    if (!settings || !Array.isArray(settings.plans) || settings.plans.length === 0) {
+        console.warn("getFinancingOptionsMap: No valid plans found or settings.plans is not an array, returning empty map.");
+        return {};
+    }
     return settings.plans.reduce((acc, plan) => {
-      acc[plan.months] = { rate: plan.rate, label: plan.label };
+      // Ensure plan is an object and has months, rate, label
+      if (plan && typeof plan.months === 'number' && typeof plan.rate === 'number' && typeof plan.label === 'string') {
+        acc[plan.months] = { rate: plan.rate, label: plan.label };
+      } else {
+        console.warn("getFinancingOptionsMap: Skipping invalid plan object during reduce:", plan);
+      }
       return acc;
     }, {} as { [key: number]: { rate: number; label: string } });
 }
@@ -330,11 +356,11 @@ const defaultGeneralSettings: AppGeneralSettings = {
   appName: "RecurPay",
   appLogoUrl: "",
   notificationsEnabled: false,
-  themePrimary: "207 88% 68%", 
-  themeSecondary: "207 88% 88%", 
-  themeAccent: "124 39% 64%", 
-  themeBackground: "207 88% 94%", 
-  themeForeground: "210 40% 25%", 
+  themePrimary: "207 88% 68%",
+  themeSecondary: "207 88% 88%",
+  themeAccent: "124 39% 64%",
+  themeBackground: "207 88% 94%",
+  themeForeground: "210 40% 25%",
 };
 
 export async function getGeneralSettings(): Promise<AppGeneralSettings> {
