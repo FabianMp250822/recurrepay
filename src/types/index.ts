@@ -77,6 +77,7 @@ export type ClientFormData = {
 
 export type PublicClientFormData = z.infer<typeof publicClientSchema> & {
   email: string; // Email is added here after user registration step
+  applyIva?: boolean; // Added for self-registration
   acceptanceLetterUrl?: string;
   acceptanceLetterFileName?: string;
   contractFileUrl?: string;

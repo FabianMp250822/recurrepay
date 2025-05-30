@@ -11,7 +11,7 @@ export const clientSchema = z.object({
     (val) => (val === "" || val === null || val === undefined ? undefined : parseFloat(String(val))),
     z.number().positive({ message: "El valor del contrato debe ser un número positivo." }).optional()
   ),
-  applyIva: z.boolean().optional().default(true), // New field, defaults to true
+  applyIva: z.boolean().optional().default(true),
   downPaymentPercentage: z.preprocess(
     (val) => (val === "" || val === null || val === undefined ? undefined : parseFloat(String(val))),
     z.number().min(0, "El porcentaje de abono no puede ser negativo.").max(100, "El porcentaje no puede exceder 100.").optional()
@@ -52,9 +52,6 @@ export const clientSchema = z.object({
         path: ["downPaymentPercentage"],
       });
     }
-    // paymentAmount para contrato < 1M se calcula y se espera sea el total.
-    // Se podría añadir una validación aquí si el paymentAmount no coincide con el cálculo esperado (contractValue + IVA si aplica)
-    // pero es más fácil manejarlo en la lógica del formulario y acción.
   } else if (contractValue >= CONTRACT_VALUE_THRESHOLD) {
     if (data.downPaymentPercentage !== undefined && data.downPaymentPercentage !== 0 && data.downPaymentPercentage < MIN_DOWN_PAYMENT_PERCENTAGE_LARGE_CONTRACT) {
       ctx.addIssue({
@@ -65,9 +62,7 @@ export const clientSchema = z.object({
     }
   }
 
-  // Validación general del paymentAmount
   if (contractValue === 0 && (data.financingPlan === 0 || data.financingPlan === undefined)) {
-    // Sin contrato y sin financiación (servicio recurrente simple)
     if (data.paymentAmount === undefined || data.paymentAmount <= 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -75,17 +70,10 @@ export const clientSchema = z.object({
         path: ["paymentAmount"],
       });
     }
-  } else if (contractValue > 0 && data.financingPlan === 0) {
-    // Con contrato pero sin financiación
-    if (data.downPaymentPercentage === 100 && (data.paymentAmount !== undefined && data.paymentAmount !== 0)) {
-        // Si el abono es 100%, el monto de pago debería ser 0 (ya está pagado)
-        // ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Si el abono es 100%, el monto de pago debe ser 0.", path: ["paymentAmount"]});
-        // El formulario y la acción deberían forzar paymentAmount a 0 en este caso.
-    } else if ((data.downPaymentPercentage ?? 0) < 100 && (data.paymentAmount === undefined || data.paymentAmount <= 0) && contractValue < CONTRACT_VALUE_THRESHOLD) {
-        // Si el contrato es < 1M y no está 100% abonado, el paymentAmount (pago único) debe ser > 0.
-        // Esto es manejado por el formulario al auto-calcularlo.
+  } else if (contractValue > 0 && (data.financingPlan === 0 || data.financingPlan === undefined) ) {
+    if ((data.downPaymentPercentage ?? 0) < 100 && (data.paymentAmount === undefined || data.paymentAmount <= 0) && contractValue < CONTRACT_VALUE_THRESHOLD) {
+        // Auto-calculated for < 1M
     } else if ((data.downPaymentPercentage ?? 0) < 100 && (data.paymentAmount === undefined || data.paymentAmount <= 0) && contractValue >= CONTRACT_VALUE_THRESHOLD) {
-        // Si el contrato es >= 1M, sin financiación, y no está 100% abonado, se espera un paymentAmount > 0 para el saldo o para recurrencia.
          ctx.addIssue({
             code: z.ZodIssueCode.custom,
             message: "Se requiere un monto de pago válido si el contrato no está totalmente cubierto por el abono y no hay financiación.",
@@ -114,6 +102,7 @@ export const publicClientSchema = z.object({
     (val) => (val === "" || val === null || val === undefined ? 0 : parseFloat(String(val))), 
     z.number().min(0, "El valor del contrato debe ser un número positivo o cero.")
   ),
+  applyIva: z.boolean().optional().default(true), // Added for self-registration
   financingPlan: z.coerce.number({invalid_type_error: "Debe seleccionar un plan de financiación."})
     .refine(val => typeof val === 'number', { message: "Seleccione un plan de financiación válido."}), 
   paymentDayOfMonth: z.coerce.number().int().min(1, { message: "El día debe estar entre 1 y 31." }).max(31, { message: "El día debe estar entre 1 y 31." }),
@@ -124,7 +113,7 @@ export const publicClientSchema = z.object({
   contractFileName: z.string().max(100, "Nombre de archivo muy largo.").optional().or(z.literal('')),
 
 }).refine(data => {
-  if (data.contractValue > 0 && data.financingPlan === undefined) { 
+  if (data.contractValue && data.contractValue > 0 && data.financingPlan === undefined) { 
     return false; 
   }
   return true;
