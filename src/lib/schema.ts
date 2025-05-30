@@ -13,7 +13,7 @@ export const clientSchema = z.object({
   ),
   downPaymentPercentage: z.preprocess(
     (val) => (val === "" || val === null || val === undefined ? undefined : parseFloat(String(val))),
-    z.number().min(0, "El porcentaje no puede ser negativo.").max(100, "El porcentaje no puede exceder 100.").optional()
+    z.number().min(30, "El porcentaje de abono no puede ser menor al 30%.").max(100, "El porcentaje no puede exceder 100.").optional()
   ),
   paymentMethod: z.string().optional().or(z.literal('')),
   financingPlan: z.coerce.number()
@@ -41,11 +41,18 @@ export const clientSchema = z.object({
   path: ["contractValue"],
 }).refine(data => {
     if (data.contractValue !== undefined && data.contractValue > 0 && data.financingPlan === 0) {
+        // If there's a contract value and no financing plan, it could be a single payment.
+        // Payment amount is optional here, as the total contract value (after down payment) might be paid upfront.
+        // Or a recurring payment amount could be set.
         return true; 
     }
-    if (data.financingPlan && data.financingPlan !== 0 && data.contractValue && data.contractValue > 0) return true;
+    if (data.financingPlan && data.financingPlan !== 0 && data.contractValue && data.contractValue > 0) {
+        // If there's a financing plan and contract value, paymentAmount will be calculated and is not directly required from user.
+        return true;
+    }
     
     if ((data.contractValue === undefined || data.contractValue === 0) && (data.financingPlan === undefined || data.financingPlan === 0)) {
+        // No contract, no financing plan => simple recurring service, paymentAmount is required and must be positive.
         return data.paymentAmount !== undefined && data.paymentAmount > 0;
     }
     return true;
@@ -77,14 +84,13 @@ export const publicClientSchema = z.object({
     .refine(val => typeof val === 'number', { message: "Seleccione un plan de financiación válido."}), 
   paymentDayOfMonth: z.coerce.number().int().min(1, { message: "El día debe estar entre 1 y 31." }).max(31, { message: "El día debe estar entre 1 y 31." }),
   
-  // Nuevos campos opcionales para los documentos
   acceptanceLetterUrl: z.string().url("URL inválida para carta de aceptación.").optional().or(z.literal('')),
   acceptanceLetterFileName: z.string().max(100, "Nombre de archivo muy largo.").optional().or(z.literal('')),
   contractFileUrl: z.string().url("URL inválida para contrato.").optional().or(z.literal('')),
   contractFileName: z.string().max(100, "Nombre de archivo muy largo.").optional().or(z.literal('')),
 
 }).refine(data => {
-  if (data.contractValue > 0 && data.financingPlan === undefined) {
+  if (data.contractValue > 0 && data.financingPlan === undefined) { // Check if financingPlan is undefined when contractValue > 0
     return false; 
   }
   return true;
