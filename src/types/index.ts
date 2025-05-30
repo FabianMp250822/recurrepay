@@ -20,7 +20,8 @@ export interface Client {
   email: string;
   phoneNumber: string;
 
-  contractValue?: number; 
+  contractValue?: number;
+  applyIva?: boolean; // New field
   ivaRate?: number; 
   ivaAmount?: number; 
   totalWithIva?: number; 
@@ -48,7 +49,7 @@ export interface Client {
   contractFileName?: string;
 
   paymentsMadeCount?: number; 
-  status?: 'active' | 'completed' | 'defaulted' | 'pending_approval'; // Added 'pending_approval'
+  status?: 'active' | 'completed' | 'defaulted' | 'pending_approval';
 }
 
 export type ClientFormData = {
@@ -57,6 +58,7 @@ export type ClientFormData = {
   email: string;
   phoneNumber: string;
   contractValue?: number;
+  applyIva?: boolean; // New field
   downPaymentPercentage?: number; 
   paymentMethod?: string;
   financingPlan?: number; 

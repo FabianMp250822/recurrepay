@@ -11,20 +11,20 @@ export const clientSchema = z.object({
     (val) => (val === "" || val === null || val === undefined ? undefined : parseFloat(String(val))),
     z.number().positive({ message: "El valor del contrato debe ser un número positivo." }).optional()
   ),
+  applyIva: z.boolean().optional().default(true), // New field, defaults to true
   downPaymentPercentage: z.preprocess(
     (val) => (val === "" || val === null || val === undefined ? undefined : parseFloat(String(val))),
-    // La validación min/max se hará con superRefine ahora
     z.number().min(0, "El porcentaje de abono no puede ser negativo.").max(100, "El porcentaje no puede exceder 100.").optional()
   ),
   paymentMethod: z.string().optional().or(z.literal('')),
-  financingPlan: z.coerce.number() // Permite que sea 0 para "Sin financiación"
+  financingPlan: z.coerce.number() 
     .optional().or(z.literal(0)),
   
   paymentDayOfMonth: z.coerce.number().int().min(1, { message: "El día debe estar entre 1 y 31." }).max(31, { message: "El día debe estar entre 1 y 31." }),
 
   paymentAmount: z.preprocess(
     (val) => (val === "" || val === null || val === undefined ? undefined : parseFloat(String(val))),
-    z.number().min(0, "El monto de pago no puede ser negativo.").optional() // Permitir 0 si está totalmente pagado o es calculado
+    z.number().min(0, "El monto de pago no puede ser negativo.").optional() 
   ),
 
   acceptanceLetterUrl: z.string().url().optional().or(z.literal('')),
@@ -34,9 +34,10 @@ export const clientSchema = z.object({
 
 }).superRefine((data, ctx) => {
   const contractValue = data.contractValue ?? 0;
+  const CONTRACT_VALUE_THRESHOLD = 1000000;
+  const MIN_DOWN_PAYMENT_PERCENTAGE_LARGE_CONTRACT = 20;
 
-  if (contractValue > 0 && contractValue < 1000000) {
-    // Para contratos < $1,000,000
+  if (contractValue > 0 && contractValue < CONTRACT_VALUE_THRESHOLD) {
     if (data.financingPlan !== 0 && data.financingPlan !== undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -51,45 +52,21 @@ export const clientSchema = z.object({
         path: ["downPaymentPercentage"],
       });
     }
-    // El paymentAmount debería ser el total del contrato (calculado en el form/action)
-    if (data.paymentAmount === undefined || data.paymentAmount <= 0) {
-        // Se espera que el paymentAmount sea el totalWithIva. Si no, es un error.
-        // Esta validación es más para asegurar que el dato final sea correcto.
-        // El form intentará auto-llenarlo.
-    }
-
-  } else if (contractValue >= 1000000) {
-    // Para contratos >= $1,000,000
-    if (data.downPaymentPercentage !== undefined && data.downPaymentPercentage < 20) {
+    // paymentAmount para contrato < 1M se calcula y se espera sea el total.
+    // Se podría añadir una validación aquí si el paymentAmount no coincide con el cálculo esperado (contractValue + IVA si aplica)
+    // pero es más fácil manejarlo en la lógica del formulario y acción.
+  } else if (contractValue >= CONTRACT_VALUE_THRESHOLD) {
+    if (data.downPaymentPercentage !== undefined && data.downPaymentPercentage !== 0 && data.downPaymentPercentage < MIN_DOWN_PAYMENT_PERCENTAGE_LARGE_CONTRACT) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "El porcentaje de abono inicial no puede ser inferior al 20% para contratos de este valor.",
+        message: `El porcentaje de abono inicial debe ser 0% o al menos ${MIN_DOWN_PAYMENT_PERCENTAGE_LARGE_CONTRACT}% para contratos de este valor.`,
         path: ["downPaymentPercentage"],
       });
     }
   }
 
   // Validación general del paymentAmount
-  if (data.financingPlan && data.financingPlan !== 0 && contractValue > 0) {
-    // Si hay financiación, el paymentAmount es calculado y no requiere validación directa aquí (salvo que sea 0 si algo falló).
-    // Se podría verificar si es positivo si se espera una cuota.
-  } else if (data.financingPlan === 0 && contractValue > 0) {
-    // Contrato sin financiación (pago único o con recurrente adicional)
-    if (data.paymentAmount === undefined || data.paymentAmount <= 0) {
-      // Si el contrato es < 1M, este se auto-llenará. Si es >= 1M y pago único (sin abono o abono cubre todo),
-      // paymentAmount podría ser 0 si se considera pagado por abono, o el saldo restante.
-      // Si se requiere un monto de pago explícito (ej. servicio recurrente sobre contrato pagado), debe ser > 0.
-      // Esta lógica es compleja para una sola regla Zod; el formulario y las acciones deben manejarla.
-      // Por ahora, si no hay financiación y hay contrato, esperamos que paymentAmount sea >= 0.
-       if (data.paymentAmount === undefined || data.paymentAmount < 0) {
-         ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: "Se requiere un monto de pago válido para contratos sin financiación.",
-            path: ["paymentAmount"],
-         });
-       }
-    }
-  } else if (contractValue === 0 && (data.financingPlan === 0 || data.financingPlan === undefined)) {
+  if (contractValue === 0 && (data.financingPlan === 0 || data.financingPlan === undefined)) {
     // Sin contrato y sin financiación (servicio recurrente simple)
     if (data.paymentAmount === undefined || data.paymentAmount <= 0) {
       ctx.addIssue({
@@ -97,6 +74,23 @@ export const clientSchema = z.object({
         message: "Se requiere un monto de pago recurrente positivo si no hay contrato ni financiación.",
         path: ["paymentAmount"],
       });
+    }
+  } else if (contractValue > 0 && data.financingPlan === 0) {
+    // Con contrato pero sin financiación
+    if (data.downPaymentPercentage === 100 && (data.paymentAmount !== undefined && data.paymentAmount !== 0)) {
+        // Si el abono es 100%, el monto de pago debería ser 0 (ya está pagado)
+        // ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Si el abono es 100%, el monto de pago debe ser 0.", path: ["paymentAmount"]});
+        // El formulario y la acción deberían forzar paymentAmount a 0 en este caso.
+    } else if ((data.downPaymentPercentage ?? 0) < 100 && (data.paymentAmount === undefined || data.paymentAmount <= 0) && contractValue < CONTRACT_VALUE_THRESHOLD) {
+        // Si el contrato es < 1M y no está 100% abonado, el paymentAmount (pago único) debe ser > 0.
+        // Esto es manejado por el formulario al auto-calcularlo.
+    } else if ((data.downPaymentPercentage ?? 0) < 100 && (data.paymentAmount === undefined || data.paymentAmount <= 0) && contractValue >= CONTRACT_VALUE_THRESHOLD) {
+        // Si el contrato es >= 1M, sin financiación, y no está 100% abonado, se espera un paymentAmount > 0 para el saldo o para recurrencia.
+         ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Se requiere un monto de pago válido si el contrato no está totalmente cubierto por el abono y no hay financiación.",
+            path: ["paymentAmount"],
+         });
     }
   }
 });
