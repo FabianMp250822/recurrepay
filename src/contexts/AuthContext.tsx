@@ -6,7 +6,7 @@ import { signOut, onAuthStateChanged, signInWithEmailAndPassword } from 'firebas
 import { doc, getDoc } from 'firebase/firestore';
 import { useRouter, usePathname } from 'next/navigation';
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { auth, db } from '@/lib/firebase'; 
+import { auth, db } from '@/lib/firebase';
 import { Loader2 } from 'lucide-react';
 
 interface AuthContextType {
@@ -22,7 +22,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const PUBLIC_PATHS = ['/login', '/inscribir']; // Definir rutas públicas aquí también
+const PUBLIC_PATHS = ['/login', '/inscribir'];
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -44,28 +44,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const adminDocSnap = await getDoc(adminDocRef);
           if (adminDocSnap.exists() && adminDocSnap.data().activo === true) {
             setIsAdmin(true);
-            // Si el admin está logueado y está en /login o /inscribir, redirigir al dashboard.
-            // AppLayout ya no maneja esta redirección para PUBLIC_PATHS, así que AuthContext puede hacerlo.
-            if (PUBLIC_PATHS.includes(pathname)) {
+            // If admin is logged in and on a public path (EXCEPT /inscribir while they might be guiding someone), redirect to dashboard.
+            // The /inscribir page handles its own user state for new registrations.
+            if (pathname === '/login') { // Only redirect from /login if admin
               router.replace('/dashboard');
             }
           } else {
             setIsAdmin(false);
-            await signOut(auth); 
-            setUser(null);
-            setAuthError("Acceso denegado. No es un administrador autorizado o activo.");
-            // Si no es admin y no está en una ruta pública, redirigir a login
+            // If not an admin, but logged in, and not on /inscribir, sign out and redirect to login.
+            // This prevents non-admins from lingering in authenticated state on protected parts of the app.
+            // If on /inscribir, allow them to stay as it's a public user flow.
             if (!PUBLIC_PATHS.includes(pathname)) {
-                 router.replace('/login');
+                await signOut(auth);
+                setUser(null);
+                setAuthError("Acceso denegado. No es un administrador autorizado o activo.");
+                router.replace('/login');
             }
           }
         } catch (error) {
           console.error("Error al verificar estado de administrador:", error);
           setIsAdmin(false);
-          await signOut(auth);
-          setUser(null);
-          setAuthError("Error al verificar privilegios de administrador.");
           if (!PUBLIC_PATHS.includes(pathname)) {
+            await signOut(auth);
+            setUser(null);
+            setAuthError("Error al verificar privilegios de administrador.");
             router.replace('/login');
           }
         }
@@ -82,16 +84,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     return () => unsubscribe();
-  // Quitamos pathname de las dependencias aquí para evitar bucles si router.replace se llama mucho.
-  // La lógica de redirección basada en pathname ya está dentro del callback.
-  }, [router]); 
+  }, [router, pathname]); // Added pathname to dependencies
 
   const login = async (email: string, pass: string) => {
     setLoading(true);
     setAuthError(null);
     try {
       await signInWithEmailAndPassword(auth, email, pass);
-      // La redirección después del login la manejará el useEffect de onAuthStateChanged
+      // Redirection after admin login is handled by useEffect
     } catch (error: any) {
       console.error("Error de inicio de sesión:", error);
       let message = "Error al iniciar sesión. Por favor, verifique sus credenciales.";
@@ -114,7 +114,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await signOut(auth);
       setUser(null);
       setIsAdmin(false);
-      router.replace('/login'); // Siempre redirigir a login al cerrar sesión
+      router.replace('/login');
     } catch (error) {
       console.error("Error al cerrar sesión:", error);
       setAuthError("Error al cerrar sesión. Por favor, inténtelo de nuevo.");
@@ -123,8 +123,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Loader global mientras initialLoadComplete es false y no estamos en una página pública.
-  // Las páginas públicas (/login, /inscribir) renderizarán su propio contenido sin este loader global.
   if (!initialLoadComplete && !PUBLIC_PATHS.includes(pathname)) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background">
@@ -132,7 +130,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
-
 
   return (
     <AuthContext.Provider value={{ user, isAdmin, loading, initialLoadComplete, login, logout, authError, setAuthError }}>
