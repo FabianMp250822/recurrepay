@@ -14,6 +14,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
 
+  // ✅ TODOS los hooks deben estar al inicio, antes de cualquier return
+  React.useEffect(() => {
+    if (initialLoadComplete && (!user || !userRole) && !PUBLIC_PATHS.includes(pathname)) {
+      router.replace('/login');
+    }
+  }, [initialLoadComplete, user, userRole, pathname, router]);
+
   // Si es una ruta pública, renderizar sin layout
   if (PUBLIC_PATHS.includes(pathname)) {
     return <>{children}</>;
@@ -43,13 +50,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
-
-  // Redirigir usuarios no autenticados o sin rol definido
-  React.useEffect(() => {
-    if (initialLoadComplete && (!user || !userRole) && !PUBLIC_PATHS.includes(pathname)) {
-      router.replace('/login');
-    }
-  }, [initialLoadComplete, user, userRole, pathname, router]);
 
   // Si es administrador, mostrar layout completo de admin
   if (user && userRole === 'admin' && !PUBLIC_PATHS.includes(pathname)) {

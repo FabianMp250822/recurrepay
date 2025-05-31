@@ -1,10 +1,27 @@
-
 'use client';
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import Image from 'next/image';
-import { Users, LogOut, CreditCard, BarChart3, SettingsIcon, Loader2, Link as LinkIconLucide } from 'lucide-react';
+import {
+  Activity,
+  ArrowUpRight,
+  BarChart3,
+  Calendar,
+  CircleUser,
+  CreditCard,
+  DollarSign,
+  LogOut,
+  Menu,
+  Package2,
+  Search,
+  Users,
+  MessageCircle, // Agregar este import
+  Settings,
+  FileText,
+  Calculator,
+  Link as LinkIconLucide,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -19,10 +36,13 @@ import { useToast } from '@/hooks/use-toast';
 const mainNavItems = [
   { href: '/dashboard', label: 'Panel de Analíticas', icon: BarChart3 },
   { href: '/clients', label: 'Clientes', icon: Users },
-  // { href: '/clients/new', label: 'Agregar Cliente', icon: Users },
+  { href: '/dashboard/tickets', label: 'Tickets', icon: MessageCircle },
+  { href: '/dashboard/payments', label: 'Pagos', icon: CreditCard },
+  { href: '/dashboard/reports', label: 'Reportes', icon: FileText },
+  { href: '/dashboard/calendar', label: 'Calendario', icon: Calendar }, // Cambiado de Calculator a Calendar
 ];
 
-const settingsNavItem = { href: '/settings', label: 'Configuración', icon: SettingsIcon };
+const settingsNavItem = { href: '/settings', label: 'Configuración', icon: Settings };
 
 export function AppSidebar() {
   const pathname = usePathname();

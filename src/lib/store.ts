@@ -1,4 +1,5 @@
 import type { Client, PaymentRecord, AppFinancingSettings, AppGeneralSettings, FinancingPlanSetting } from '@/types';
+import type { Ticket, CreateTicketData, TicketMessage, TicketStatus } from '@/types/ticket';
 import { db } from '@/lib/firebase';
 import {
   collection,
@@ -21,6 +22,7 @@ const PAYMENT_HISTORY_SUBCOLLECTION = 'paymentHistory';
 const APP_SETTINGS_COLLECTION = 'appSettings';
 const FINANCING_PLANS_DOC_ID = 'financingPlans';
 const GENERAL_SETTINGS_DOC_ID = 'generalSettings';
+const TICKETS_COLLECTION = 'tickets';
 
 // Define defaultFinancingPlansData with a 'plans' array directly
 const defaultFinancingPlansData: AppFinancingSettings = {
@@ -487,5 +489,236 @@ export async function isEmailAdmin(email: string): Promise<boolean> {
   } catch (error) {
     console.error('Error checking admin status by email:', error);
     return false;
+  }
+}
+
+/**
+ * Obtener todos los tickets (para administradores)
+ */
+export async function getAllTickets(): Promise<Ticket[]> {
+  try {
+    const ticketsQuery = query(
+      collection(db, TICKETS_COLLECTION),
+      orderBy('createdAt', 'desc')
+    );
+    
+    const snapshot = await getDocs(ticketsQuery);
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as Ticket));
+  } catch (error) {
+    console.error('Error fetching tickets:', error);
+    throw error;
+  }
+}
+
+/**
+ * Obtener tickets por estado
+ */
+export async function getTicketsByStatus(status: TicketStatus): Promise<Ticket[]> {
+  try {
+    const ticketsQuery = query(
+      collection(db, TICKETS_COLLECTION),
+      where('status', '==', status),
+      orderBy('createdAt', 'desc')
+    );
+    
+    const snapshot = await getDocs(ticketsQuery);
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as Ticket));
+  } catch (error) {
+    console.error('Error fetching tickets by status:', error);
+    throw error;
+  }
+}
+
+/**
+ * Obtener tickets de un cliente específico
+ */
+export async function getClientTickets(clientId: string): Promise<Ticket[]> {
+  try {
+    const ticketsQuery = query(
+      collection(db, TICKETS_COLLECTION),
+      where('clientId', '==', clientId),
+      orderBy('createdAt', 'desc')
+    );
+    
+    const snapshot = await getDocs(ticketsQuery);
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as Ticket));
+  } catch (error) {
+    console.error('Error fetching client tickets:', error);
+    throw error;
+  }
+}
+
+/**
+ * Crear nuevo ticket
+ */
+export async function createTicket(
+  clientId: string,
+  clientName: string,
+  clientEmail: string,
+  ticketData: CreateTicketData
+): Promise<{ ticket?: Ticket; error?: string }> {
+  try {
+    const now = new Date().toISOString();
+    
+    const newTicket: Omit<Ticket, 'id'> = {
+      clientId,
+      clientName,
+      clientEmail,
+      subject: ticketData.subject,
+      description: ticketData.description,
+      status: 'recibida',
+      priority: ticketData.priority,
+      category: ticketData.category,
+      createdAt: now,
+      updatedAt: now,
+      messages: [{
+        id: crypto.randomUUID(),
+        message: ticketData.description,
+        sentBy: 'client',
+        sentByName: clientName,
+        sentByEmail: clientEmail,
+        timestamp: now,
+      }],
+      isClientRead: true,
+      isAdminRead: false,
+    };
+
+    const docRef = await addDoc(collection(db, TICKETS_COLLECTION), newTicket);
+    const ticket = { id: docRef.id, ...newTicket };
+    
+    return { ticket };
+  } catch (error) {
+    console.error('Error creating ticket:', error);
+    return { error: 'Error al crear el ticket' };
+  }
+}
+
+/**
+ * Agregar mensaje a ticket
+ */
+export async function addTicketMessage(
+  ticketId: string,
+  message: string,
+  sentBy: 'client' | 'admin',
+  sentByName: string,
+  sentByEmail: string,
+  attachments?: string[]
+): Promise<{ success?: boolean; error?: string }> {
+  try {
+    const ticketRef = doc(db, TICKETS_COLLECTION, ticketId);
+    const ticketDoc = await getDoc(ticketRef);
+    
+    if (!ticketDoc.exists()) {
+      return { error: 'Ticket no encontrado' };
+    }
+    
+    const ticketData = ticketDoc.data() as Ticket;
+    const now = new Date().toISOString();
+    
+    const newMessage: TicketMessage = {
+      id: crypto.randomUUID(),
+      message,
+      sentBy,
+      sentByName,
+      sentByEmail,
+      timestamp: now,
+      attachments,
+    };
+    
+    const updatedMessages = [...ticketData.messages, newMessage];
+    
+    await updateDoc(ticketRef, {
+      messages: updatedMessages,
+      updatedAt: now,
+      isClientRead: sentBy === 'client',
+      isAdminRead: sentBy === 'admin',
+    });
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Error adding ticket message:', error);
+    return { error: 'Error al enviar el mensaje' };
+  }
+}
+
+/**
+ * Actualizar estado del ticket
+ */
+export async function updateTicketStatus(
+  ticketId: string,
+  status: TicketStatus,
+  assignedToAdmin?: string,
+  assignedToAdminName?: string
+): Promise<{ success?: boolean; error?: string }> {
+  try {
+    const ticketRef = doc(db, TICKETS_COLLECTION, ticketId);
+    const updateData: any = {
+      status,
+      updatedAt: new Date().toISOString(),
+      isAdminRead: true,
+    };
+    
+    if (assignedToAdmin !== undefined) {
+      updateData.assignedToAdmin = assignedToAdmin;
+      updateData.assignedToAdminName = assignedToAdminName;
+    }
+    
+    await updateDoc(ticketRef, updateData);
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating ticket status:', error);
+    return { error: 'Error al actualizar el estado del ticket' };
+  }
+}
+
+/**
+ * Marcar ticket como leído
+ */
+export async function markTicketAsRead(
+  ticketId: string,
+  readBy: 'client' | 'admin'
+): Promise<{ success?: boolean; error?: string }> {
+  try {
+    const ticketRef = doc(db, TICKETS_COLLECTION, ticketId);
+    const updateData = readBy === 'client' 
+      ? { isClientRead: true } 
+      : { isAdminRead: true };
+    
+    await updateDoc(ticketRef, updateData);
+    return { success: true };
+  } catch (error) {
+    console.error('Error marking ticket as read:', error);
+    return { error: 'Error al marcar como leído' };
+  }
+}
+
+/**
+ * Obtener ticket por ID
+ */
+export async function getTicketById(ticketId: string): Promise<Ticket | null> {
+  try {
+    const ticketRef = doc(db, TICKETS_COLLECTION, ticketId);
+    const ticketDoc = await getDoc(ticketRef);
+    
+    if (!ticketDoc.exists()) {
+      return null;
+    }
+    
+    return {
+      id: ticketDoc.id,
+      ...ticketDoc.data()
+    } as Ticket;
+  } catch (error) {
+    console.error('Error fetching ticket by ID:', error);
+    throw error;
   }
 }
