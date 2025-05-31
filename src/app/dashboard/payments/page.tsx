@@ -2,14 +2,14 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { CreditCard, Search, Filter, Download, Calendar, DollarSign, CheckCircle, Clock, XCircle, Eye } from 'lucide-react';
-import { formatCurrency, formatDate, getDaysUntilDue } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { CheckCircle, XCircle, Clock, Search, CreditCard, Eye, Download, Calendar, DollarSign } from 'lucide-react';
+import { formatCurrency, formatDate } from '@/lib/utils';
 import { getClients, getPaymentHistory, getPendingPayments } from '@/lib/store';
 import AppLayout from '@/components/layout/app-layout';
 import type { Client, PaymentRecord as BasePaymentRecord } from '@/types';
@@ -36,9 +36,12 @@ export default function PaymentsPage() {
   const [statusFilter, setStatusFilter] = useState('validated'); // ✅ Por defecto solo validados
   const [monthFilter, setMonthFilter] = useState('todos');
 
-  const loadPaymentsData = async () => {
+  // ✅ NUEVA función para recargar solo los datos necesarios
+  const loadPaymentsData = async (showLoading = true) => {
     try {
-      setLoading(true);
+      if (showLoading) {
+        setLoading(true);
+      }
       setError(null);
       
       const clientsData = await getClients();
@@ -76,8 +79,17 @@ export default function PaymentsPage() {
       console.error('Error loading payments data:', error);
       setError('Error al cargar los datos de pagos');
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
+  };
+
+  // ✅ NUEVA función para manejar la validación de pagos
+  const handlePaymentProcessed = async () => {
+    console.log('🔄 Pago procesado, recargando datos...');
+    // Recargar datos sin mostrar loading para mejor UX
+    await loadPaymentsData(false);
   };
 
   useEffect(() => {
@@ -90,6 +102,7 @@ export default function PaymentsPage() {
     filterPayments();
   }, [allPayments, searchTerm, statusFilter, monthFilter]);
 
+  // ✅ Filtrar pagos según criterios
   const filterPayments = () => {
     let filtered = [...allPayments];
 
@@ -253,9 +266,12 @@ export default function PaymentsPage() {
         <p className="text-gray-600">Administre y valide todos los pagos del sistema.</p>
       </div>
 
-      {/* ✅ Panel de pagos pendientes - PRIMERA PRIORIDAD */}
+      {/* ✅ Panel de pagos pendientes - PRIMERA PRIORIDAD con callback */}
       <div className="mb-6">
-        <PendingPaymentsPanel pendingPayments={pendingPayments} />
+        <PendingPaymentsPanel 
+          pendingPayments={pendingPayments} 
+          onPaymentProcessed={handlePaymentProcessed} // ✅ NUEVO callback
+        />
       </div>
 
       {/* ✅ Estadísticas por estado */}

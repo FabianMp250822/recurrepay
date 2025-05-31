@@ -1,22 +1,23 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { CheckCircle, XCircle, Eye, Clock, User } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { validatePaymentAction } from '@/app/actions/clientActions';
-import { useToast } from '@/hooks/use-toast';
 import type { PaymentRecord } from '@/types';
 
 interface PendingPaymentsPanelProps {
   pendingPayments: (PaymentRecord & { clientName: string; clientEmail: string })[];
+  onPaymentProcessed?: () => void; // ✅ NUEVO: Callback para recargar datos
 }
 
-export default function PendingPaymentsPanel({ pendingPayments }: PendingPaymentsPanelProps) {
+export default function PendingPaymentsPanel({ pendingPayments, onPaymentProcessed }: PendingPaymentsPanelProps) {
   const [isProcessing, startTransition] = useTransition();
   const [rejectionReason, setRejectionReason] = useState('');
   const [selectedPayment, setSelectedPayment] = useState<PaymentRecord | null>(null);
@@ -41,6 +42,11 @@ export default function PendingPaymentsPanel({ pendingPayments }: PendingPayment
           setDialogOpen(false);
           setRejectionReason('');
           setSelectedPayment(null);
+          
+          // ✅ NUEVO: Llamar callback para recargar datos
+          if (onPaymentProcessed) {
+            onPaymentProcessed();
+          }
         } else {
           toast({
             title: "Error",
@@ -122,6 +128,14 @@ export default function PendingPaymentsPanel({ pendingPayments }: PendingPayment
                       <div>
                         <span className="font-medium">Archivo:</span> {payment.proofFileName}
                       </div>
+                      {/* ✅ NUEVO: Mostrar información de cuota */}
+                      {payment.installmentNumber && (
+                        <div className="col-span-2">
+                          <span className="font-medium">Cuota:</span> #{payment.installmentNumber}
+                          {payment.totalInstallments && ` de ${payment.totalInstallments}`}
+                          {payment.installmentType && ` (${payment.installmentType === 'single' ? 'Pago único' : 'Mensual'})`}
+                        </div>
+                      )}
                     </div>
                     
                     {payment.notes && (

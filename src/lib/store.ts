@@ -795,3 +795,29 @@ export async function getTicketById(ticketId: string): Promise<Ticket | null> {
     throw error;
   }
 }
+
+/**
+ * Obtener cliente por Firebase ID
+ */
+export async function getClientByFirebaseId(firebaseId: string): Promise<Client | undefined> {
+  if (!db) {
+    console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in getClientByFirebaseId.");
+    return undefined;
+  }
+  try {
+    const clientsCollectionRef = collection(db, CLIENTS_COLLECTION);
+    const q = query(clientsCollectionRef, where('firebaseId', '==', firebaseId));
+    const querySnapshot = await getDocs(q);
+    if (!querySnapshot.empty) {
+      const docSnap = querySnapshot.docs[0];
+      return { id: docSnap.id, ...(docSnap.data() as Omit<Client, 'id'>) };
+    }
+    return undefined;
+  } catch (error: any) {
+    console.error("Error fetching client by Firebase ID from Firestore:", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    if (error.code === 'permission-denied') {
+      console.error(`Permission denied when fetching client by Firebase ID '${firebaseId}'. Check Firestore security rules.`);
+    }
+    return undefined;
+  }
+}

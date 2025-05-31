@@ -5,64 +5,81 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { CalendarIcon, CreditCardIcon, FileTextIcon, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { CreditCard as CreditCardIcon, Clock, CheckCircle, XCircle, Eye, AlertTriangle } from 'lucide-react';
 import { formatCurrency, formatDate, getDaysUntilDue } from '@/lib/utils';
-import { getClientByEmail, getPaymentHistory } from '@/lib/store';
+import { getClientByFirebaseId, getPaymentHistory } from '@/lib/store';
 import ClientLayout from '@/components/layout/client-layout';
-import type { Client, PaymentRecord } from '@/types';
 import SubmitPaymentButton from '@/components/clients/SubmitPaymentButton';
+import { PaymentHistoryList } from '@/components/clients/PaymentHistoryList';
+import FullInstallmentsTable from '@/components/clients/FullInstallmentsTable';
+import PaymentProgressChart from '@/components/analytics/PaymentProgressChart'; // ✅ NUEVO
+import ClientTicketsSummary from '@/components/tickets/ClientTicketsSummary'; // ✅ NUEVO
+import type { Client, PaymentRecord } from '@/types';
 
 export default function ClientDashboardPage() {
-  const { user, initialLoadComplete } = useAuth();
-  const [client, setClient] = useState<Client | null>(null);
+  const { user, client: authClient, loading: loadingAuth, initialLoadComplete } = useAuth();
+  const [client, setClient] = useState<Client | null>(authClient);
   const [paymentHistory, setPaymentHistory] = useState<PaymentRecord[]>([]);
-  const [loadingClient, setLoadingClient] = useState(true);
-  const [loadingHistory, setLoadingHistory] = useState(true);
-
-  useEffect(() => {
-    if (initialLoadComplete && user?.email) {
-      loadClientData();
-    }
-  }, [initialLoadComplete, user]);
+  const [loadingClient, setLoadingClient] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   const loadClientData = async () => {
-    if (!user?.email) return;
-    
+    if (!user?.uid) return;
+
+    setLoadingClient(true);
     try {
-      setLoadingClient(true);
-      const clientData = await getClientByEmail(user.email);
-      setClient(clientData || null);
-      
+      const clientData = await getClientByFirebaseId(user.uid);
       if (clientData) {
+        setClient(clientData);
+        
+        // Cargar historial de pagos
         setLoadingHistory(true);
-        const history = await getPaymentHistory(clientData.id);
-        setPaymentHistory(history);
+        try {
+          const history = await getPaymentHistory(clientData.id);
+          setPaymentHistory(history);
+        } catch (error) {
+          console.error('Error loading payment history:', error);
+        } finally {
+          setLoadingHistory(false);
+        }
       }
     } catch (error) {
       console.error('Error loading client data:', error);
     } finally {
       setLoadingClient(false);
-      setLoadingHistory(false);
     }
   };
 
-  const getPaymentStatusIcon = (payment: PaymentRecord) => {
-    switch (payment.status) {
-      case 'validated':
-        return <CheckCircle className="h-4 w-4 text-green-600" />;
-      case 'pending':
-        return <Clock className="h-4 w-4 text-yellow-600" />;
-      case 'rejected':
-        return <AlertTriangle className="h-4 w-4 text-red-600" />;
-      default:
-        return <CheckCircle className="h-4 w-4 text-green-600" />;
+  useEffect(() => {
+    if (initialLoadComplete && user) {
+      if (!authClient) {
+        loadClientData();
+      } else {
+        setClient(authClient);
+        // Cargar historial si ya tenemos cliente
+        if (authClient.id) {
+          setLoadingHistory(true);
+          getPaymentHistory(authClient.id).then(history => {
+            setPaymentHistory(history);
+          }).catch(error => {
+            console.error('Error loading payment history:', error);
+          }).finally(() => {
+            setLoadingHistory(false);
+          });
+        }
+      }
     }
+  }, [initialLoadComplete, user, authClient]);
+
+  // ✅ Función para recargar datos después de enviar un pago
+  const handlePaymentSubmitted = () => {
+    loadClientData();
   };
 
   const getPaymentRecordStatusBadge = (payment: PaymentRecord) => {
-    switch (payment.status) {
-      case 'validated':
-        return <Badge variant="default">Validado</Badge>;
+    const status = payment.status || 'validated';
+    switch (status) {
       case 'pending':
         return <Badge variant="secondary">En Validación</Badge>;
       case 'rejected':
@@ -135,13 +152,13 @@ export default function ClientDashboardPage() {
               ¡Hola, {client.firstName} {client.lastName}!
             </CardTitle>
             <CardDescription>
-              Estado de tu cuenta y próximos pagos
+              Estado de tu cuenta y plan de pagos
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid gap-4 md:grid-cols-3">
               <div className="space-y-2">
-                <p className="text-sm text-muted-foreground">Estado del Pago</p>
+                <p className="text-sm text-muted-foreground">Estado del Plan</p>
                 {getPaymentStatusBadge()}
               </div>
               
@@ -162,27 +179,31 @@ export default function ClientDashboardPage() {
           </CardContent>
         </Card>
 
-        {/* Botón para reportar pago */}
-        {client.status !== 'completed' && (
-          <Card>
-            <CardHeader>
-              <CardTitle>¿Ya realizaste tu pago?</CardTitle>
-              <CardDescription>
-                Reporta tu pago para que sea validado por nuestro equipo
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <SubmitPaymentButton client={client} />
-            </CardContent>
-          </Card>
-        )}
+        {/* ✅ NUEVA: Tabla completa de cuotas (pagadas y pendientes) */}
+        <FullInstallmentsTable 
+          client={client} 
+          paymentHistory={paymentHistory}
+          onPaymentSubmitted={handlePaymentSubmitted}
+        />
 
-        {/* Historial de Pagos */}
+        {/* ✅ NUEVA SECCIÓN: Gráficos de progreso y tickets */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Gráfico de progreso de pagos */}
+          <PaymentProgressChart 
+            client={client} 
+            paymentHistory={paymentHistory}
+          />
+          
+          {/* Resumen de tickets de soporte */}
+          <ClientTicketsSummary />
+        </div>
+
+        {/* Historial de Pagos Detallado (mantener para referencia completa) */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-xl">Historial de Pagos</CardTitle>
+            <CardTitle className="text-xl">Historial Detallado de Pagos</CardTitle>
             <CardDescription>
-              Registro de todos tus pagos realizados
+              Registro cronológico de todos tus pagos
             </CardDescription>
           </CardHeader>
           <CardContent className="px-6">
@@ -207,7 +228,7 @@ export default function ClientDashboardPage() {
                         >
                           <div className="space-y-1">
                             <div className="flex items-center gap-2">
-                              {getPaymentStatusIcon(payment)}
+                              <Clock className="h-4 w-4 text-yellow-600" />
                               <p className="font-semibold text-lg">
                                 {formatCurrency(payment.amountPaid)}
                               </p>
@@ -216,6 +237,12 @@ export default function ClientDashboardPage() {
                             <p className="text-sm text-muted-foreground">
                               Enviado: {formatDate(payment.recordedAt)}
                             </p>
+                            {payment.installmentNumber && (
+                              <p className="text-sm text-blue-600">
+                                Cuota #{payment.installmentNumber}
+                                {payment.totalInstallments && ` de ${payment.totalInstallments}`}
+                              </p>
+                            )}
                           </div>
                           <div className="text-left sm:text-right space-y-1">
                             <p className="text-sm font-medium">
@@ -252,7 +279,7 @@ export default function ClientDashboardPage() {
                         >
                           <div className="space-y-1">
                             <div className="flex items-center gap-2">
-                              {getPaymentStatusIcon(payment)}
+                              <CheckCircle className="h-4 w-4 text-green-600" />
                               <p className="font-semibold text-lg">
                                 {formatCurrency(payment.amountPaid)}
                               </p>
@@ -261,6 +288,12 @@ export default function ClientDashboardPage() {
                             <p className="text-sm text-muted-foreground">
                               Registrado: {formatDate(payment.recordedAt)}
                             </p>
+                            {payment.installmentNumber && (
+                              <p className="text-sm text-blue-600">
+                                Cuota #{payment.installmentNumber}
+                                {payment.totalInstallments && ` de ${payment.totalInstallments}`}
+                              </p>
+                            )}
                           </div>
                           <div className="text-left sm:text-right space-y-1">
                             <p className="text-sm font-medium">
@@ -297,7 +330,7 @@ export default function ClientDashboardPage() {
                         >
                           <div className="space-y-1">
                             <div className="flex items-center gap-2">
-                              {getPaymentStatusIcon(payment)}
+                              <XCircle className="h-4 w-4 text-red-600" />
                               <p className="font-semibold text-lg">
                                 {formatCurrency(payment.amountPaid)}
                               </p>
@@ -306,6 +339,12 @@ export default function ClientDashboardPage() {
                             <p className="text-sm text-muted-foreground">
                               Enviado: {formatDate(payment.recordedAt)}
                             </p>
+                            {payment.installmentNumber && (
+                              <p className="text-sm text-blue-600">
+                                Cuota #{payment.installmentNumber}
+                                {payment.totalInstallments && ` de ${payment.totalInstallments}`}
+                              </p>
+                            )}
                             {payment.rejectionReason && (
                               <p className="text-sm text-red-600">
                                 Motivo: {payment.rejectionReason}

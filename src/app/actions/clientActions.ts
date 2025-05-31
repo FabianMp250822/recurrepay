@@ -10,6 +10,7 @@ import { formatCurrency, formatDate, calculateNextPaymentDate as calculateNextRe
 import { IVA_RATE } from '@/lib/constants';
 import { addMonths, setDate, getDate, getDaysInMonth, parseISO } from 'date-fns'; // ✅ Verificar que esté importado
 import { getGeneralSettings, getFinancingOptionsMap } from '@/lib/store'; 
+import { getInstallmentInfo } from '@/lib/utils';
 
 const CONTRACT_VALUE_THRESHOLD = 1000000;
 const MIN_DOWN_PAYMENT_PERCENTAGE_LARGE_CONTRACT = 20;
@@ -412,6 +413,10 @@ export async function submitClientPaymentAction(formData: FormData) {
       return { success: false, error: "Cliente no encontrado" };
     }
 
+    // ✅ Obtener historial de pagos para calcular número de cuota
+    const paymentHistory = await store.getPaymentHistory(clientId);
+    const installmentInfo = getInstallmentInfo(client, paymentHistory);
+
     // ✅ Convertir File a una estructura que se pueda pasar al cliente
     const fileBuffer = await proofFile.arrayBuffer();
     const fileData = {
@@ -421,7 +426,7 @@ export async function submitClientPaymentAction(formData: FormData) {
       size: proofFile.size
     };
 
-    // ✅ Crear el registro de pago PENDIENTE - NO VALIDADO
+    // ✅ Crear el registro de pago PENDIENTE - NO VALIDADO con información de cuota
     const paymentRecord: Omit<PaymentRecord, 'id' | 'recordedAt'> = {
       paymentDate: paymentDate,
       amountPaid: amountPaid,
@@ -431,6 +436,10 @@ export async function submitClientPaymentAction(formData: FormData) {
       proofFileName: proofFile.name,
       submittedBy: 'client', // ✅ Identificar que fue enviado por el cliente
       clientId: clientId,
+      // ✅ NUEVO: Información de cuota
+      installmentNumber: installmentInfo.installmentNumber,
+      totalInstallments: installmentInfo.totalInstallments,
+      installmentType: installmentInfo.installmentType,
     };
 
     // ✅ SOLO agregar al historial - NO actualizar el cliente aún

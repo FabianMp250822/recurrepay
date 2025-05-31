@@ -23,6 +23,20 @@ export interface PaymentRecord {
   validatedAt?: string; // Fecha de validación por el admin
   validatedBy?: string; // ID del admin que validó
   rejectionReason?: string; // Razón de rechazo si aplica
+  
+  // ✅ NUEVO: Información de cuotas
+  installmentNumber?: number; // Número de cuota (1, 2, 3, etc.)
+  totalInstallments?: number; // Total de cuotas del plan
+  installmentType?: 'monthly' | 'single' | 'downpayment'; // Tipo de cuota
+}
+
+// ✅ NUEVO: Interface para cuotas pendientes
+export interface PendingInstallment {
+  number: number;
+  dueDate: string;
+  amount: number;
+  status: 'pending' | 'overdue';
+  description: string;
 }
 
 export interface Client {

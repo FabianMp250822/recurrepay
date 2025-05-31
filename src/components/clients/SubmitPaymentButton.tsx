@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useState, useTransition, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,26 +8,67 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Upload, Loader2, Receipt, CheckCircle } from 'lucide-react';
+import { Upload, Loader2, Receipt, CheckCircle, AlertCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, formatDate } from '@/lib/utils';
 import { submitClientPaymentAction, updatePaymentWithProofUrl } from '@/app/actions/clientActions';
 import { uploadFile } from '@/lib/uploadFile';
-import type { Client } from '@/types';
+
+import { getInstallmentInfo } from '@/lib/utils';
+import type { Client, PaymentRecord } from '@/types';
+import { getPaymentHistory } from '@/lib/store';
+
+interface SpecificInstallment {
+  number: number;
+  amount: number;
+  dueDate: string;
+  description: string;
+  isOverdue: boolean;
+}
 
 interface SubmitPaymentButtonProps {
   client: Client;
+  specificInstallment?: SpecificInstallment; // ✅ Nueva prop para cuota específica
+  onPaymentSubmitted?: () => void;
+  variant?: 'default' | 'table-row'; // ✅ Para diferentes estilos
 }
 
-export default function SubmitPaymentButton({ client }: SubmitPaymentButtonProps) {
+export default function SubmitPaymentButton({ 
+  client, 
+  specificInstallment,
+  onPaymentSubmitted,
+  variant = 'default'
+}: SubmitPaymentButtonProps) {
   const [isProcessing, startTransition] = useTransition();
   const { toast } = useToast();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
-  const [amountPaid, setAmountPaid] = useState(client.paymentAmount || 0);
+  const [amountPaid, setAmountPaid] = useState(specificInstallment?.amount || client.paymentAmount || 0);
   const [notes, setNotes] = useState('');
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState<'idle' | 'registering' | 'uploading' | 'completed'>('idle');
+  const [paymentHistory, setPaymentHistory] = useState<PaymentRecord[]>([]);
+
+  useEffect(() => {
+    // Cargar historial de pagos para calcular número de cuota
+    const loadPaymentHistory = async () => {
+      try {
+        const history = await getPaymentHistory(client.id);
+        setPaymentHistory(history);
+      } catch (error) {
+        console.error('Error loading payment history:', error);
+      }
+    };
+    
+    loadPaymentHistory();
+  }, [client.id]);
+
+  // ✅ Actualizar monto cuando cambia la cuota específica
+  useEffect(() => {
+    if (specificInstallment) {
+      setAmountPaid(specificInstallment.amount);
+    }
+  }, [specificInstallment]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -86,6 +127,11 @@ export default function SubmitPaymentButton({ client }: SubmitPaymentButtonProps
         formData.append('amountPaid', amountPaid.toString());
         formData.append('notes', notes);
         formData.append('proofFile', proofFile);
+        
+        // ✅ Agregar información de cuota específica si existe
+        if (specificInstallment) {
+          formData.append('specificInstallmentNumber', specificInstallment.number.toString());
+        }
 
         // Paso 1: Registrar el pago en el servidor
         const result = await submitClientPaymentAction(formData);
@@ -113,15 +159,22 @@ export default function SubmitPaymentButton({ client }: SubmitPaymentButtonProps
             setUploadProgress('completed');
             toast({
               title: "Pago enviado exitosamente",
-              description: "Su pago ha sido enviado para validación. Recibirá una notificación cuando sea procesado.",
+              description: specificInstallment 
+                ? `Cuota #${specificInstallment.number} enviada para validación`
+                : "Su pago ha sido enviado para validación. Recibirá una notificación cuando sea procesado.",
             });
+            
+            // Llamar callback si existe
+            if (onPaymentSubmitted) {
+              onPaymentSubmitted();
+            }
             
             // Limpiar formulario después de un breve delay
             setTimeout(() => {
               setIsDialogOpen(false);
               setProofFile(null);
               setNotes('');
-              setAmountPaid(client.paymentAmount || 0);
+              setAmountPaid(specificInstallment?.amount || client.paymentAmount || 0);
               setUploadProgress('idle');
             }, 2000);
           } else {
@@ -161,7 +214,7 @@ export default function SubmitPaymentButton({ client }: SubmitPaymentButtonProps
       case 'completed':
         return '¡Completado!';
       default:
-        return 'Enviar';
+        return variant === 'table-row' ? 'Reportar' : 'Enviar';
     }
   };
 
@@ -173,27 +226,94 @@ export default function SubmitPaymentButton({ client }: SubmitPaymentButtonProps
       case 'uploading':
         return <Loader2 className="h-4 w-4 mr-2 animate-spin" />;
       default:
-        return null;
+        return variant === 'table-row' ? <Receipt className="h-4 w-4" /> : null;
     }
   };
+
+  // ✅ Obtener información de cuota (específica o siguiente)
+  const installmentInfo = specificInstallment 
+    ? {
+        installmentNumber: specificInstallment.number,
+        totalInstallments: client.financingPlan || null,
+        installmentType: 'monthly' as const,
+        amount: specificInstallment.amount,
+        dueDate: specificInstallment.dueDate,
+        description: specificInstallment.description,
+        isOverdue: specificInstallment.isOverdue
+      }
+    : (() => {
+        const info = getInstallmentInfo(client, paymentHistory);
+        return {
+          ...info,
+          amount: client.paymentAmount || 0,
+          dueDate: client.nextPaymentDate,
+          description: `Cuota ${info.installmentNumber}${info.totalInstallments ? ` de ${info.totalInstallments}` : ''}`,
+          isOverdue: false
+        };
+      })();
+
+  // ✅ Diferentes estilos según el variant
+  const triggerButton = variant === 'table-row' ? (
+    <Button 
+      size="sm"
+      variant={installmentInfo.isOverdue ? "destructive" : "default"}
+      className="w-full"
+    >
+      <Receipt className="h-4 w-4 mr-1" />
+      Reportar
+    </Button>
+  ) : (
+    <Button className="w-full">
+      <Receipt className="h-4 w-4 mr-2" />
+      Reportar Pago - Cuota #{installmentInfo.installmentNumber}
+      {installmentInfo.totalInstallments && ` de ${installmentInfo.totalInstallments}`}
+    </Button>
+  );
 
   return (
     <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
       <DialogTrigger asChild>
-        <Button className="w-full">
-          <Receipt className="h-4 w-4 mr-2" />
-          Reportar Pago
-        </Button>
+        {triggerButton}
       </DialogTrigger>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Reportar Pago Realizado</DialogTitle>
+          <DialogTitle>
+            Reportar Pago - Cuota #{installmentInfo.installmentNumber}
+          </DialogTitle>
           <DialogDescription>
-            Complete la información de su pago para que sea validado por nuestro equipo.
+            {installmentInfo.description}
+            {installmentInfo.installmentType === 'single' && ' (Pago único)'}
+            {installmentInfo.isOverdue && ' - VENCIDA'}
           </DialogDescription>
         </DialogHeader>
         
         <div className="space-y-4">
+          {/* ✅ Mostrar información de la cuota */}
+          <Card className={installmentInfo.isOverdue ? "bg-red-50 border-red-200" : "bg-blue-50"}>
+            <CardContent className="pt-4">
+              <div className="text-center">
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  {installmentInfo.isOverdue && <AlertCircle className="h-5 w-5 text-red-600" />}
+                  <h4 className={`font-semibold text-lg ${installmentInfo.isOverdue ? 'text-red-700' : ''}`}>
+                    Cuota #{installmentInfo.installmentNumber}
+                    {installmentInfo.totalInstallments && ` de ${installmentInfo.totalInstallments}`}
+                  </h4>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {installmentInfo.description}
+                </p>
+                {installmentInfo.isOverdue && (
+                  <p className="text-sm text-red-600 font-medium">
+                    Vencimiento: {formatDate(installmentInfo.dueDate)}
+                  </p>
+                )}
+                <p className={`text-xl font-bold mt-2 ${installmentInfo.isOverdue ? 'text-red-700' : 'text-blue-700'}`}>
+                  {formatCurrency(installmentInfo.amount)}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
           <div>
             <Label htmlFor="paymentDate">Fecha del Pago</Label>
             <Input
@@ -218,7 +338,7 @@ export default function SubmitPaymentButton({ client }: SubmitPaymentButtonProps
               disabled={isProcessing}
             />
             <p className="text-xs text-muted-foreground mt-1">
-              Monto esperado: {formatCurrency(client.paymentAmount || 0)}
+              Monto esperado: {formatCurrency(installmentInfo.amount)}
             </p>
           </div>
 
@@ -254,16 +374,16 @@ export default function SubmitPaymentButton({ client }: SubmitPaymentButtonProps
           </div>
 
           {uploadProgress !== 'idle' && (
-            <Card className="bg-blue-50">
+            <Card className={installmentInfo.isOverdue ? "bg-red-50" : "bg-blue-50"}>
               <CardContent className="pt-4">
                 <div className="flex items-center space-x-2">
                   {getProgressIcon()}
-                  <span className="text-sm font-medium text-blue-800">
+                  <span className={`text-sm font-medium ${installmentInfo.isOverdue ? 'text-red-800' : 'text-blue-800'}`}>
                     {getProgressText()}
                   </span>
                 </div>
                 {uploadProgress === 'completed' && (
-                  <p className="text-xs text-blue-600 mt-2">
+                  <p className={`text-xs mt-2 ${installmentInfo.isOverdue ? 'text-red-600' : 'text-blue-600'}`}>
                     ✓ Su pago ha sido enviado para validación exitosamente
                   </p>
                 )}
@@ -271,11 +391,16 @@ export default function SubmitPaymentButton({ client }: SubmitPaymentButtonProps
             </Card>
           )}
 
-          <Card className="bg-blue-50">
+          <Card className={installmentInfo.isOverdue ? "bg-red-50" : "bg-blue-50"}>
             <CardContent className="pt-4">
-              <p className="text-sm text-blue-800">
+              <p className={`text-sm ${installmentInfo.isOverdue ? 'text-red-800' : 'text-blue-800'}`}>
                 <strong>Importante:</strong> Su pago será revisado por nuestro equipo en un plazo de 24-48 horas. 
                 Recibirá una notificación por email cuando sea validado o si requiere alguna corrección.
+                {installmentInfo.isOverdue && (
+                  <span className="block mt-1 font-medium">
+                    Esta cuota está vencida. Pueden aplicarse intereses adicionales.
+                  </span>
+                )}
               </p>
             </CardContent>
           </Card>
@@ -293,6 +418,7 @@ export default function SubmitPaymentButton({ client }: SubmitPaymentButtonProps
               onClick={handleSubmitPayment}
               disabled={isProcessing || !proofFile || uploadProgress === 'completed'}
               className="flex-1"
+              variant={installmentInfo.isOverdue ? "destructive" : "default"}
             >
               {getProgressIcon()}
               {getProgressText()}
