@@ -1,4 +1,3 @@
-
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -24,12 +23,12 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Progress } from "@/components/ui/progress";
-import { Switch } from "@/components/ui/switch"; // Assuming you might use it, good to have.
+import { Switch } from "@/components/ui/switch";
 import { useToast } from '@/hooks/use-toast';
 import { registrationSchema, basePublicClientObjectSchema, publicClientSchema } from '@/lib/schema';
 import type { Client, PublicClientFormData } from '@/types';
 import { selfRegisterClientAction, checkClientProfileStatus } from '@/app/actions/publicClientActions';
-import { Loader2, UploadCloud, FileText, CheckCircle2, XCircle, LinkIcon, Eye, EyeOff } from 'lucide-react';
+import { Loader2, UploadCloud, FileText, CheckCircle2, XCircle, LinkIcon, Eye, EyeOff, AlertTriangle } from 'lucide-react';
 import { IVA_RATE } from '@/lib/constants';
 import { storage, auth, db } from '@/lib/firebase';
 import { getFinancingOptionsMap, getGeneralSettings } from '@/lib/store';
@@ -90,7 +89,11 @@ export function ClientSelfRegistrationForm() {
 
   const [financingOptions, setFinancingOptions] = useState<FinancingOptionsMapType>({});
   const [isLoadingFinancingOptions, setIsLoadingFinancingOptions] = useState(true);
-  const [applyIvaFromUrl, setApplyIvaFromUrl] = useState(true);
+  
+  // Estado del IVA
+  const [applyIvaFromUrl, setApplyIvaFromUrl] = useState(true); // Valor inicial desde URL
+  const [currentIvaState, setCurrentIvaState] = useState(true); // Estado actual del switch
+  const [showIvaWarning, setShowIvaWarning] = useState(false); // Mostrar advertencia
 
   const [acceptanceLetterState, setAcceptanceLetterState] = useState<FileUploadState>(initialFileUploadState);
   const [contractFileState, setContractFileState] = useState<FileUploadState>(initialFileUploadState);
@@ -129,15 +132,15 @@ export function ClientSelfRegistrationForm() {
     }
     loadInitialData();
 
+    // Configurar el estado inicial del IVA basado en la URL
     const ivaParam = searchParams.get('applyIva');
-    if (ivaParam === 'false') {
-      setApplyIvaFromUrl(false);
-    } else {
-      setApplyIvaFromUrl(true); // Default to true if param is missing or not 'false'
-    }
+    const initialIvaState = ivaParam !== 'false'; // Por defecto true, false solo si explícitamente es 'false'
+    
+    setApplyIvaFromUrl(initialIvaState);
+    setCurrentIvaState(initialIvaState);
+    setShowIvaWarning(false); // Sin advertencia inicial
 
   }, [searchParams, toast]);
-
 
   const registrationForm = useForm<z.infer<typeof registrationSchema>>({
     resolver: zodResolver(registrationSchema),
@@ -160,6 +163,19 @@ export function ClientSelfRegistrationForm() {
   const watchedFinancingPlan = clientDetailsForm.watch('financingPlan');
 
 
+  // Función para manejar el cambio del switch de IVA
+  const handleIvaToggle = (checked: boolean) => {
+    setCurrentIvaState(checked);
+    
+    // Mostrar advertencia solo si el estado actual es diferente al predeterminado por URL
+    // y el usuario está desactivando el IVA cuando debería estar activado
+    if (applyIvaFromUrl && !checked) {
+      setShowIvaWarning(true);
+    } else {
+      setShowIvaWarning(false);
+    }
+  };
+
   useEffect(() => {
     const cvRaw = clientDetailsForm.getValues('contractValue');
     const financingPlanKeyRaw = clientDetailsForm.getValues('financingPlan');
@@ -167,7 +183,8 @@ export function ClientSelfRegistrationForm() {
     let cv = typeof cvRaw === 'number' ? cvRaw : 0;
     let financingPlanKey = typeof financingPlanKeyRaw === 'number' ? financingPlanKeyRaw : 0;
 
-    const currentIvaRate = applyIvaFromUrl && cv > 0 ? IVA_RATE : 0;
+    // Usar el estado actual del IVA (del switch) en lugar del valor de la URL
+    const currentIvaRate = currentIvaState && cv > 0 ? IVA_RATE : 0;
     const ivaAmount = cv * currentIvaRate;
     const totalWithIva = cv + ivaAmount;
     const amountToFinance = totalWithIva; // No down payment in public flow by default
@@ -201,7 +218,7 @@ export function ClientSelfRegistrationForm() {
       monthlyInstallment,
     });
 
-  }, [watchedContractValue, watchedFinancingPlan, applyIvaFromUrl, financingOptions, clientDetailsForm]);
+  }, [watchedContractValue, watchedFinancingPlan, currentIvaState, financingOptions, clientDetailsForm]);
 
 
   const handleCredentialSubmit = async (values: z.infer<typeof registrationSchema>) => {
@@ -300,7 +317,7 @@ export function ClientSelfRegistrationForm() {
     const fullFormData: PublicClientFormData = {
       ...values,
       email: loggedInUser.email,
-      applyIva: applyIvaFromUrl,
+      applyIva: currentIvaState, // Usar el estado actual del switch
       acceptanceLetterUrl: acceptanceLetterState.url || undefined,
       acceptanceLetterFileName: acceptanceLetterState.name || undefined,
       contractFileUrl: contractFileState.url || undefined,
@@ -324,22 +341,47 @@ export function ClientSelfRegistrationForm() {
     setIsLoading(false);
   };
 
-  const FileInputField = ({ id, fileState, onFileChange, label }: { id: string; fileState: FileUploadState; onFileChange: (file: File) => void; label: string; }) => (
-    <FormItem>
-      <FormLabel>{label}</FormLabel>
+  const FileInputField = ({ id, fileState, onFileChange, label }: { 
+    id: string; 
+    fileState: FileUploadState; 
+    onFileChange: (file: File) => void; 
+    label: string; 
+  }) => (
+    <div className="space-y-2">
+      <label htmlFor={id} className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+        {label}
+      </label>
       {fileState.url && !fileState.isUploading && (
         <div className="text-sm text-muted-foreground mb-2 p-2 border rounded-md">
           Archivo actual: <a href={fileState.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-1"><LinkIcon size={14}/> {fileState.name || 'Ver archivo'}</a>
         </div>
       )}
-      <FormControl>
-        <Input id={id} type="file" onChange={(e) => e.target.files?.[0] && onFileChange(e.target.files[0])} className="flex-grow" disabled={fileState.isUploading || isLoading} />
-      </FormControl>
-      {fileState.isUploading && (<div className="mt-2"><Progress value={fileState.progress} className="w-full h-2" /><p className="text-xs text-muted-foreground mt-1">Subiendo: {fileState.file?.name} ({fileState.progress.toFixed(0)}%)</p></div>)}
-      {fileState.url && !fileState.isUploading && fileState.file && (<div className="mt-2 text-sm text-green-600 flex items-center gap-1"><CheckCircle2 size={16} /> ¡{fileState.name} subido con éxito!</div>)}
-      {fileState.error && !fileState.isUploading && (<div className="mt-2 text-sm text-destructive flex items-center gap-1"><XCircle size={16} /> Error: {fileState.error}</div>)}
-      <FormMessage />
-    </FormItem>
+      <Input 
+        id={id} 
+        type="file" 
+        onChange={(e) => e.target.files?.[0] && onFileChange(e.target.files[0])} 
+        className="flex-grow" 
+        disabled={fileState.isUploading || isLoading} 
+      />
+      {fileState.isUploading && (
+        <div className="mt-2">
+          <Progress value={fileState.progress} className="w-full h-2" />
+          <p className="text-xs text-muted-foreground mt-1">
+            Subiendo: {fileState.file?.name} ({fileState.progress.toFixed(0)}%)
+          </p>
+        </div>
+      )}
+      {fileState.url && !fileState.isUploading && fileState.file && (
+        <div className="mt-2 text-sm text-green-600 flex items-center gap-1">
+          <CheckCircle2 size={16} /> ¡{fileState.name} subido con éxito!
+        </div>
+      )}
+      {fileState.error && !fileState.isUploading && (
+        <div className="mt-2 text-sm text-destructive flex items-center gap-1">
+          <XCircle size={16} /> Error: {fileState.error}
+        </div>
+      )}
+    </div>
   );
 
 
@@ -435,9 +477,37 @@ export function ClientSelfRegistrationForm() {
                 </FormItem>
               )} />
 
-              <p className="text-sm p-3 bg-blue-50 border border-blue-200 rounded-md text-blue-700">
-                {applyIvaFromUrl ? `Se aplicará IVA del ${(IVA_RATE * 100).toFixed(0)}% al valor del contrato.` : 'Este contrato está configurado como Exento de IVA.'}
-              </p>
+              {/* Switch de IVA con lógica inteligente */}
+              <FormItem className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <FormLabel className="text-base">Aplicar IVA ({(IVA_RATE * 100).toFixed(0)}%)</FormLabel>
+                  <FormControl>
+                    <Switch
+                      checked={currentIvaState}
+                      onCheckedChange={handleIvaToggle}
+                    />
+                  </FormControl>
+                </div>
+                <FormDescription>
+                  {currentIvaState 
+                    ? `Se aplicará IVA del ${(IVA_RATE * 100).toFixed(0)}% al valor del contrato.`
+                    : 'Este contrato está configurado como Exento de IVA.'
+                  }
+                </FormDescription>
+                
+                {/* Advertencia cuando el usuario desactiva IVA en un enlace que debería tenerlo */}
+                {showIvaWarning && (
+                  <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="h-5 w-5 text-yellow-600 mt-0.5 flex-shrink-0" />
+                      <div className="text-sm text-yellow-800">
+                        <p className="font-medium">Exención de IVA Solicitada</p>
+                        <p>Has decidido no aplicar IVA a este contrato. Esta configuración deberá ser validada y aprobada por nuestro equipo administrativo antes de procesar tu solicitud.</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </FormItem>
 
               {(watchedContractValue ?? 0) > 0 && (
                 <FormField control={clientDetailsForm.control} name="financingPlan" render={({ field }) => (
@@ -471,8 +541,8 @@ export function ClientSelfRegistrationForm() {
                   <CardHeader><CardTitle className="text-lg">Resumen (Calculado)</CardTitle></CardHeader>
                   <CardContent className="space-y-3 text-sm">
                     <div className="flex justify-between"><span>Valor Contrato:</span> <strong>{formatCurrency(watchedContractValue || 0)}</strong></div>
-                    {applyIvaFromUrl && <div className="flex justify-between"><span>IVA ({(IVA_RATE * 100).toFixed(0)}%):</span> <strong>{formatCurrency(calculatedValues.ivaAmount)}</strong></div>}
-                    <div className="flex justify-between"><span>Total {applyIvaFromUrl ? 'con IVA' : 'Contrato'}:</span> <strong>{formatCurrency(calculatedValues.totalWithIva)}</strong></div>
+                    {currentIvaState && <div className="flex justify-between"><span>IVA ({(IVA_RATE * 100).toFixed(0)}%):</span> <strong>{formatCurrency(calculatedValues.ivaAmount)}</strong></div>}
+                    <div className="flex justify-between"><span>Total {currentIvaState ? 'con IVA' : 'Contrato'}:</span> <strong>{formatCurrency(calculatedValues.totalWithIva)}</strong></div>
                     {(watchedFinancingPlan ?? 0) !== 0 && (
                       <>
                         <hr/>
@@ -497,23 +567,36 @@ export function ClientSelfRegistrationForm() {
 
          {currentStep === 'documents' && loggedInUser && (
           <div className="space-y-8 pt-6">
-            <FileInputField id="contractFile" label="Contrato Firmado (Opcional)" fileState={contractFileState} onFileChange={(file) => handleFileUpload(file, 'contractFile', setContractFileState)} />
-            <FileInputField id="acceptanceLetter" label="Carta de Aceptación (Opcional)" fileState={acceptanceLetterState} onFileChange={(file) => handleFileUpload(file, 'acceptanceLetter', setAcceptanceLetterState)} />
+            <FileInputField 
+              id="contractFile" 
+              label="Contrato Firmado (Opcional)" 
+              fileState={contractFileState} 
+              onFileChange={(file) => handleFileUpload(file, 'contractFile', setContractFileState)} 
+            />
+            <FileInputField 
+              id="acceptanceLetter" 
+              label="Carta de Aceptación (Opcional)" 
+              fileState={acceptanceLetterState} 
+              onFileChange={(file) => handleFileUpload(file, 'acceptanceLetter', setAcceptanceLetterState)} 
+            />
             <Button 
               onClick={clientDetailsForm.handleSubmit(onSubmitClientDetails)} 
               className="w-full" 
               disabled={isLoading || contractFileState.isUploading || acceptanceLetterState.isUploading}
             >
-              {(isLoading || contractFileState.isUploading || acceptanceLetterState.isUploading) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : 'Finalizar Registro y Guardar Datos'}
+              {(isLoading || contractFileState.isUploading || acceptanceLetterState.isUploading) ? 
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : 
+                'Finalizar Registro y Guardar Datos'
+              }
             </Button>
             <Button 
-                type="button" 
-                variant="outline" 
-                className="w-full mt-2" 
-                onClick={() => setCurrentStep('details')}
-                disabled={isLoading || contractFileState.isUploading || acceptanceLetterState.isUploading}
+              type="button" 
+              variant="outline" 
+              className="w-full mt-2" 
+              onClick={() => setCurrentStep('details')}
+              disabled={isLoading || contractFileState.isUploading || acceptanceLetterState.isUploading}
             >
-                Volver a Detalles del Cliente
+              Volver a Detalles del Cliente
             </Button>
           </div>
         )}

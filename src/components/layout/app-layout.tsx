@@ -1,34 +1,41 @@
 'use client';
+
 import React from 'react';
-import { AppSidebar } from './sidebar';
-import { AppHeader } from './header';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePathname, useRouter } from 'next/navigation';
+import { AppSidebar } from './sidebar';
+import { AppHeader } from './header';
 import { Loader2 } from 'lucide-react';
 
 const PUBLIC_PATHS = ['/login', '/inscribir'];
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const { user, isAdmin, loading, initialLoadComplete } = useAuth();
+  const { user, userRole, loading, initialLoadComplete } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
 
-  // Si la ruta actual es pública, renderizar solo el contenido sin el layout de admin ni chequeos de auth aquí.
-  // AuthContext manejará redirecciones DESDE estas páginas si el usuario YA está logueado como admin.
+  // Si es una ruta pública, renderizar sin layout
   if (PUBLIC_PATHS.includes(pathname)) {
     return <>{children}</>;
   }
 
-  // Para rutas no públicas, realizar chequeos de autenticación y admin.
-  React.useEffect(() => {
-    // Solo redirigir si la carga inicial ha completado Y (no hay usuario O no es admin)
-    // Y no estamos ya en una ruta pública (aunque este useEffect ya no debería correr para esas).
-    if (initialLoadComplete && (!user || !isAdmin) && !PUBLIC_PATHS.includes(pathname)) {
-      router.replace('/login');
+  // Si es una ruta de cliente, redirigir al panel de cliente
+  if (pathname.startsWith('/client-dashboard') && userRole !== 'client') {
+    if (initialLoadComplete) {
+      if (userRole === 'admin') {
+        router.replace('/dashboard');
+      } else {
+        router.replace('/login');
+      }
     }
-  }, [user, isAdmin, initialLoadComplete, pathname, router]);
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-background">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    );
+  }
 
-  // Si aún está cargando la info de auth y no es una ruta pública, mostrar loader.
+  // Mostrar loader mientras se verifica la autenticación
   if ((!initialLoadComplete || loading) && !PUBLIC_PATHS.includes(pathname)) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background">
@@ -36,15 +43,22 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
-  
-  // Si es una ruta protegida y el usuario es admin, renderizar el layout completo.
-  if (user && isAdmin && !PUBLIC_PATHS.includes(pathname)) {
+
+  // Redirigir usuarios no autenticados o sin rol definido
+  React.useEffect(() => {
+    if (initialLoadComplete && (!user || !userRole) && !PUBLIC_PATHS.includes(pathname)) {
+      router.replace('/login');
+    }
+  }, [initialLoadComplete, user, userRole, pathname, router]);
+
+  // Si es administrador, mostrar layout completo de admin
+  if (user && userRole === 'admin' && !PUBLIC_PATHS.includes(pathname)) {
     return (
       <div className="flex min-h-screen w-full flex-col bg-muted/40">
         <AppSidebar />
-        <div className="flex flex-col sm:gap-4 sm:py-4 lg:pl-64"> {/* Ajustado pl para el ancho del sidebar */}
+        <div className="flex flex-col sm:gap-4 sm:py-4 lg:pl-64">
           <AppHeader />
-          <main className="flex-1 p-4 sm:px-6 sm:py-0 md:gap-8">
+          <main className="grid flex-1 items-start gap-4 p-4 sm:px-6 sm:py-0 md:gap-8">
             {children}
           </main>
         </div>
@@ -52,16 +66,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // Fallback para rutas no públicas si el usuario no es admin o no está autenticado.
-  // El useEffect ya debería haber redirigido, pero esto es una salvaguarda.
-  if (!PUBLIC_PATHS.includes(pathname)) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <Loader2 className="h-12 w-12 animate-spin text-primary" />
-        <p className="ml-2 text-muted-foreground">Redirigiendo...</p>
-      </div>
-    );
+  // Si es cliente, no mostrar este layout (usará ClientLayout)
+  if (userRole === 'client') {
+    return <>{children}</>;
   }
-  
-  return null; // No debería llegar aquí si la lógica es correcta para rutas públicas.
+
+  // Para otros casos, mostrar solo el contenido
+  return <>{children}</>;
 }

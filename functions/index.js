@@ -263,3 +263,174 @@ exports.sendPaymentReminders = functions
         res.status(500).send("Error interno al procesar recordatorios.");
       }
     });
+
+// --- Cloud Function Principal (Programada) ---
+exports.sendPaymentRemindersScheduled = functions
+    .runWith({
+      timeoutSeconds: 300,
+      memory: "256MB",
+    })
+    .pubsub.schedule("0 8 * * *") // Ejecutar todos los días a las 8:00 AM (UTC)
+    .timeZone("America/Bogota") // Zona horaria de Colombia
+    .onRun(async (context) => {
+      functions.logger.info("Starting scheduled sendPaymentRemindersScheduled function execution.");
+
+      try {
+        // Obtener la configuración general de la app desde Firestore
+        const generalSettingsSnapshot = await db.collection("appSettings")
+            .doc("generalSettings")
+            .get();
+
+        if (!generalSettingsSnapshot.exists) {
+          functions.logger.error("No se encontró la configuración general de la app.");
+          return null;
+        }
+
+        const generalSettings = generalSettingsSnapshot.data();
+        const companyName = generalSettings.appName || "RecurPay";
+        const companyLogoUrl = generalSettings.appLogoUrl || "";
+
+        const clientsSnapshot = await db.collection("listapagospendiendes")
+            .where("paymentAmount", ">", 0)
+            .where("status", "==", "active")
+            .get();
+
+        if (clientsSnapshot.empty) {
+          functions.logger.info("No active clients with pending payments found.");
+          return null;
+        }
+
+        let emailsSentCount = 0;
+        const emailPromises = [];
+
+        clientsSnapshot.forEach((doc) => {
+          const client = {id: doc.id, ...doc.data()};
+          const daysUntilDue = getDaysUntilDue(client.nextPaymentDate);
+
+          if (daysUntilDue >= -5 && daysUntilDue <= 5) {
+            let subject = `Recordatorio Importante - ${companyName}`;
+            const paymentAmountText = client.paymentAmount > 0 ?
+              `su pago de <strong>${formatCurrency(
+                  client.paymentAmount)}</strong>` :
+              "su próximo compromiso de pago";
+
+            if (client.paymentAmount > 0) {
+              if (daysUntilDue < 0) {
+                subject = `AVISO: Tu pago para ${client.firstName} de ${
+                  formatCurrency(client.paymentAmount)} está VENCIDO`;
+              } else if (daysUntilDue === 0) {
+                subject = `¡Importante! Tu pago de ${
+                  formatCurrency(client.paymentAmount)} para ${
+                  client.firstName} vence HOY`;
+              } else if (daysUntilDue === 1) {
+                subject = `¡Atención! Tu pago de ${
+                  formatCurrency(client.paymentAmount)} para ${
+                  client.firstName} vence MAÑANA`;
+              } else if (daysUntilDue <= 5) {
+                subject = `Recordatorio: Tu pago de ${
+                  formatCurrency(client.paymentAmount)} para ${
+                  client.firstName} vence pronto`;
+              }
+            }
+
+            const mailOptions = {
+              from: EMAIL_FROM_ADDRESS,
+              to: client.email,
+              subject: subject,
+              html: `
+              <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+                <table width="100%" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td align="left">
+                      <img src="${companyLogoUrl}" alt="${companyName} Logo"
+                       width="150" style="margin-bottom: 20px;">
+                    </td>
+                    <td align="right">
+                      <p style="font-size: 1.2em; color: #333;">
+                        <strong>${companyName}</strong>
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+                <h2 style="color: #64B5F6;">Recordatorio de Pago</h2>
+                <p>Estimado/a ${client.firstName} ${client.lastName},</p>
+                <p>Este es un recordatorio sobre ${paymentAmountText}
+                 programado para el <strong>${formatDate(client.nextPaymentDate)}</strong>.</p>
+                
+                ${client.contractValue && client.contractValue > 0 &&
+                  client.financingPlan && client.financingPlan > 0 ? `
+                <p><strong>Detalles de su financiación:</strong></p>
+                <ul>
+                  <li>Valor del Contrato: ${formatCurrency(
+                      client.contractValue)}</li>
+                  ${client.downPaymentPercentage && client.downPayment ?
+                    `<li>Abono (${client.downPaymentPercentage}%): ${
+                      formatCurrency(client.downPayment)}</li>` : ""}
+                  <li>Plan: ${(FINANCING_OPTIONS[client.financingPlan] && FINANCING_OPTIONS[client.financingPlan].label) ||
+                    `${client.financingPlan} meses`}</li>
+                  <li>Cuota Mensual: ${formatCurrency(client.paymentAmount)}</li>
+                </ul>
+                ` : client.paymentAmount > 0 ? `
+                <p><strong>Detalles del Pago Recurrente:</strong></p>
+                <ul>
+                  <li>Monto del Pago: ${formatCurrency(client.paymentAmount)}</li>
+                  <li>Fecha de Vencimiento: ${formatDate(
+                        client.nextPaymentDate)}</li>
+                </ul>
+                ` : ""}
+
+                <p>Si ya ha realizado este pago, por favor ignore este correo.
+                 Si tiene alguna pregunta o necesita actualizar su información
+                  de pago, no dude en contactarnos.</p>
+
+                <table width="100%" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td align="left">
+                      <p>¡Gracias por su preferencia!</p>
+                      <p>Atentamente,</p>
+                      <p><strong>El Equipo de ${companyName}</strong></p>
+                    </td>
+                    <td align="right">
+                      <img src="${companyLogoUrl}" alt="${companyName} Logo"
+                       width="70" style="margin-bottom: 20px;">
+                    </td>
+                  </tr>
+                </table>
+
+                <hr style="border: none; border-top: 1px solid #E3F2FD;
+                 margin-top: 20px; margin-bottom: 10px;" />
+                <p style="font-size: 0.8em; color: #777;">
+                  Este es un mensaje automático de ${companyName}.
+                   Por favor, no responda directamente a este correo
+                    electrónico.
+                </p>
+              </div>
+            `,
+            };
+
+            functions.logger.info(`Preparando correo para ${client.email},
+             asunto: ${subject}`);
+            emailPromises.push(
+                mailTransport.sendMail(mailOptions)
+                    .then(() => {
+                      emailsSentCount++;
+                      functions.logger.info(
+                          `Correo de recordatorio enviado a ${client.email}`);
+                    })
+                    .catch((error) => {
+                      functions.logger.error(
+                          `Error al enviar correo a ${client.email}:`, error);
+                    }),
+            );
+          }
+        });
+
+        await Promise.all(emailPromises);
+        functions.logger.info(`Proceso completado. Total de correos enviados: ${emailsSentCount}`);
+        return null;
+      } catch (error) {
+        functions.logger.error(
+            "Error en la función sendPaymentRemindersScheduled:", error);
+        throw error;
+      }
+    });

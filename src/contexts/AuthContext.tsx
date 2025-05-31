@@ -1,147 +1,182 @@
-
 'use client';
 
-import type { User as FirebaseUser } from 'firebase/auth';
-import { signOut, onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import { useRouter, usePathname } from 'next/navigation';
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { auth, db } from '@/lib/firebase';
-import { Loader2 } from 'lucide-react';
+import { User } from 'firebase/auth';
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { useRouter, usePathname } from 'next/navigation';
+import { auth } from '@/lib/firebase';
+import { isUserAdmin, getClientByEmail } from '@/lib/store';
+import type { Client } from '@/types';
+
+type UserRole = 'admin' | 'client' | null;
 
 interface AuthContextType {
-  user: FirebaseUser | null;
+  user: User | null;
+  client: Client | null;
   isAdmin: boolean;
+  isClient: boolean;
+  userRole: UserRole;
   loading: boolean;
   initialLoadComplete: boolean;
-  login: (email: string, pass: string) => Promise<void>;
-  logout: () => Promise<void>;
   authError: string | null;
-  setAuthError: (error: string | null) => void;
+  setAuthError: (error: string | null) => void; // Asegúrate de que esto esté incluido
+  login: (email: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const PUBLIC_PATHS = ['/login', '/inscribir'];
 
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
-  const [isAdmin, setIsAdmin] = useState<boolean>(false);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [initialLoadComplete, setInitialLoadComplete] = useState<boolean>(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [client, setClient] = useState<Client | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isClient, setIsClient] = useState(false);
+  const [userRole, setUserRole] = useState<UserRole>(null);
+  const [loading, setLoading] = useState(true);
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const router = useRouter();
   const pathname = usePathname();
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setLoading(true);
-      setAuthError(null);
       if (firebaseUser) {
         setUser(firebaseUser);
+        setAuthError(null);
+        
         try {
-          const adminDocRef = doc(db, "administradores", firebaseUser.uid);
-          const adminDocSnap = await getDoc(adminDocRef);
-          if (adminDocSnap.exists() && adminDocSnap.data().activo === true) {
+          // Verificar si es administrador
+          const adminStatus = await isUserAdmin(firebaseUser.uid);
+          
+          if (adminStatus) {
+            // Es administrador
             setIsAdmin(true);
-            // If admin is logged in and on a public path (EXCEPT /inscribir while they might be guiding someone), redirect to dashboard.
-            // The /inscribir page handles its own user state for new registrations.
-            if (pathname === '/login') { // Only redirect from /login if admin
+            setIsClient(false);
+            setUserRole('admin');
+            setClient(null);
+            
+            // Redirigir a dashboard si está en página pública
+            if (PUBLIC_PATHS.includes(pathname)) {
               router.replace('/dashboard');
             }
           } else {
-            setIsAdmin(false);
-            // If not an admin, but logged in, and not on /inscribir, sign out and redirect to login.
-            // This prevents non-admins from lingering in authenticated state on protected parts of the app.
-            // If on /inscribir, allow them to stay as it's a public user flow.
-            if (!PUBLIC_PATHS.includes(pathname)) {
-                await signOut(auth);
-                setUser(null);
-                setAuthError("Acceso denegado. No es un administrador autorizado o activo.");
-                router.replace('/login');
+            // No es admin, verificar si es cliente
+            const clientData = await getClientByEmail(firebaseUser.email!);
+            
+            if (clientData) {
+              // Es cliente registrado
+              setIsAdmin(false);
+              setIsClient(true);
+              setUserRole('client');
+              setClient(clientData);
+              
+              // Redirigir a panel de cliente si está en página pública
+              if (PUBLIC_PATHS.includes(pathname)) {
+                router.replace('/client-dashboard');
+              }
+            } else {
+              // Usuario autenticado pero sin perfil de cliente ni admin
+              setIsAdmin(false);
+              setIsClient(false);
+              setUserRole(null);
+              setClient(null);
+              
+              // Redirigir a completar perfil si no está en página pública
+              if (!PUBLIC_PATHS.includes(pathname)) {
+                router.replace('/inscribir');
+              }
             }
           }
         } catch (error) {
-          console.error("Error al verificar estado de administrador:", error);
+          console.error("Error al verificar rol de usuario:", error);
           setIsAdmin(false);
+          setIsClient(false);
+          setUserRole(null);
+          setClient(null);
+          
           if (!PUBLIC_PATHS.includes(pathname)) {
             await signOut(auth);
             setUser(null);
-            setAuthError("Error al verificar privilegios de administrador.");
+            setAuthError("Error al verificar permisos de usuario.");
             router.replace('/login');
           }
         }
-      } else { // firebaseUser es null (no autenticado)
+      } else {
+        // Usuario no autenticado
         setUser(null);
+        setClient(null);
         setIsAdmin(false);
-        // Si no está autenticado y NO está en una ruta pública, redirigir a login.
-         if (!PUBLIC_PATHS.includes(pathname)) {
-           router.replace('/login');
-         }
+        setIsClient(false);
+        setUserRole(null);
+        
+        // Redirigir a login si no está en ruta pública
+        if (!PUBLIC_PATHS.includes(pathname)) {
+          router.replace('/login');
+        }
       }
       setLoading(false);
       setInitialLoadComplete(true);
     });
 
     return () => unsubscribe();
-  }, [router, pathname]); // Added pathname to dependencies
+  }, [router, pathname]);
 
   const login = async (email: string, pass: string) => {
     setLoading(true);
     setAuthError(null);
     try {
       await signInWithEmailAndPassword(auth, email, pass);
-      // Redirection after admin login is handled by useEffect
+      // onAuthStateChanged manejará la redirección
     } catch (error: any) {
-      console.error("Error de inicio de sesión:", error);
-      let message = "Error al iniciar sesión. Por favor, verifique sus credenciales.";
-      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-        message = "Correo electrónico o contraseña inválidos.";
-      } else if (error.code === 'auth/too-many-requests') {
-        message = "El acceso a esta cuenta ha sido deshabilitado temporalmente debido a muchos intentos fallidos de inicio de sesión. Puede restaurarlo inmediatamente restableciendo su contraseña o puede intentarlo de nuevo más tarde.";
-      }
-      setAuthError(message);
-      setUser(null);
-      setIsAdmin(false);
-      setLoading(false);
-    }
-  };
-
-  const logout = async () => {
-    setLoading(true);
-    setAuthError(null);
-    try {
-      await signOut(auth);
-      setUser(null);
-      setIsAdmin(false);
-      router.replace('/login');
-    } catch (error) {
-      console.error("Error al cerrar sesión:", error);
-      setAuthError("Error al cerrar sesión. Por favor, inténtelo de nuevo.");
+      setAuthError(error.message || 'Error al iniciar sesión');
+      throw error;
     } finally {
       setLoading(false);
     }
   };
 
-  if (!initialLoadComplete && !PUBLIC_PATHS.includes(pathname)) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <Loader2 className="h-12 w-12 animate-spin text-primary" />
-      </div>
-    );
-  }
+  const logout = async () => {
+    try {
+      await signOut(auth);
+      setUser(null);
+      setClient(null);
+      setIsAdmin(false);
+      setIsClient(false);
+      setUserRole(null);
+      setAuthError(null);
+      router.replace('/login');
+    } catch (error: any) {
+      setAuthError(error.message || 'Error al cerrar sesión');
+    }
+  };
 
   return (
-    <AuthContext.Provider value={{ user, isAdmin, loading, initialLoadComplete, login, logout, authError, setAuthError }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        client,
+        isAdmin,
+        isClient,
+        userRole,
+        loading,
+        initialLoadComplete,
+        authError,
+        setAuthError, // Asegúrate de incluir esto en el value
+        login,
+        logout,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
 }
-
-export const useAuth = (): AuthContextType => {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth debe ser usado dentro de un AuthProvider');
-  }
-  return context;
-};

@@ -1,4 +1,3 @@
-
 import type { Client, PaymentRecord, AppFinancingSettings, AppGeneralSettings, FinancingPlanSetting } from '@/types';
 import { db } from '@/lib/firebase';
 import {
@@ -423,5 +422,70 @@ export async function saveGeneralSettings(settings: Partial<AppGeneralSettings>)
         userMessage = "Error al guardar la configuración: se intentó guardar un valor indefinido. Por favor, revise los campos.";
     }
     return { success: false, error: userMessage };
+  }
+}
+
+/**
+ * Verifica si un usuario es administrador consultando la colección 'administradores'
+ * @param userId - UID del usuario de Firebase Auth
+ * @returns Promise<boolean> - true si es administrador, false en caso contrario
+ */
+export async function isUserAdmin(userId: string): Promise<boolean> {
+  try {
+    if (!userId) {
+      console.warn('isUserAdmin: userId is empty or null');
+      return false;
+    }
+
+    const adminDocRef = doc(db, 'administradores', userId);
+    const adminDoc = await getDoc(adminDocRef);
+    
+    if (adminDoc.exists()) {
+      const adminData = adminDoc.data();
+      // Verificar que el administrador esté activo (opcional)
+      // Si tienes un campo 'activo' o 'active' en tu documento de administrador
+      return adminData?.activo === true || adminData?.active === true || true; // true por defecto si no hay campo de estado
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('Error checking admin status:', error);
+    return false; // En caso de error, asumir que no es admin por seguridad
+  }
+}
+
+/**
+ * Verifica si un usuario es administrador consultando la colección 'administradores' por email
+ * @param email - Email del usuario
+ * @returns Promise<boolean> - true si es administrador, false en caso contrario
+ */
+export async function isEmailAdmin(email: string): Promise<boolean> {
+  try {
+    if (!email) {
+      console.warn('isEmailAdmin: email is empty or null');
+      return false;
+    }
+
+    const adminQuery = query(
+      collection(db, 'administradores'),
+      where('email', '==', email)
+    );
+    
+    const adminSnapshot = await getDocs(adminQuery);
+    
+    if (!adminSnapshot.empty) {
+      // Verificar que al menos uno esté activo
+      for (const doc of adminSnapshot.docs) {
+        const adminData = doc.data();
+        if (adminData?.activo === true || adminData?.active === true || true) { // true por defecto
+          return true;
+        }
+      }
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('Error checking admin status by email:', error);
+    return false;
   }
 }
