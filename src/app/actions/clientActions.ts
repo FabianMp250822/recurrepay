@@ -1,4 +1,3 @@
-
 'use server';
 
 import { revalidatePath } from 'next/cache';
@@ -9,7 +8,7 @@ import * as store from '@/lib/store';
 import type { Client, ClientFormData, PaymentRecord, AppGeneralSettings } from '@/types';
 import { formatCurrency, formatDate, calculateNextPaymentDate as calculateNextRegPaymentDateUtil, getDaysUntilDue } from '@/lib/utils';
 import { IVA_RATE } from '@/lib/constants';
-import { addMonths, setDate, getDate, getDaysInMonth, parseISO } from 'date-fns';
+import { addMonths, setDate, getDate, getDaysInMonth, parseISO } from 'date-fns'; // ✅ Verificar que esté importado
 import { getGeneralSettings, getFinancingOptionsMap } from '@/lib/store'; 
 
 const CONTRACT_VALUE_THRESHOLD = 1000000;
@@ -210,6 +209,8 @@ export async function deleteClientAction(id: string) {
 }
 
 export async function registerPaymentAction(clientId: string, siigoInvoiceUrl?: string) {
+  'use server';
+  
   const client = await store.getClientById(clientId);
   if (!client) {
     return { success: false, error: "Cliente no encontrado." };
@@ -225,14 +226,16 @@ export async function registerPaymentAction(clientId: string, siigoInvoiceUrl?: 
      return { success: false, error: "Este cliente no tiene un monto de pago configurado o es 0." };
   }
 
-
   const paymentAmountRecorded = client.paymentAmount;
   const paymentDate = new Date().toISOString();
 
+  // ✅ Este es un pago registrado directamente por el admin - va como 'validated'
   const paymentRecord: Omit<PaymentRecord, 'id' | 'recordedAt'> = {
     paymentDate: paymentDate,
     amountPaid: paymentAmountRecorded,
     siigoInvoiceUrl: siigoInvoiceUrl || undefined,
+    status: 'validated', // ✅ Admin registra directamente como validado
+    submittedBy: 'admin', // ✅ Registrado por admin
   };
 
   const historyResult = await store.addPaymentToHistory(clientId, paymentRecord);
@@ -240,6 +243,7 @@ export async function registerPaymentAction(clientId: string, siigoInvoiceUrl?: 
     return { success: false, error: `Error al guardar en historial: ${historyResult.error}` };
   }
 
+  // ✅ Como es admin, actualizar cliente inmediatamente
   let newPaymentsMadeCount = (client.paymentsMadeCount || 0) + 1;
   let newNextPaymentDate = parseISO(client.nextPaymentDate);
   
@@ -263,10 +267,10 @@ export async function registerPaymentAction(clientId: string, siigoInvoiceUrl?: 
       updates.status = 'completed';
     }
   }
-  
+
   const updateResult = await store.updateClient(clientId, updates);
   if (updateResult.error) {
-    console.error(`Failed to update client ${clientId} after registering payment. Payment history entry ${historyResult.record?.id} was created.`);
+    console.error(`Failed to update client ${clientId} after registering payment.`);
     return { success: false, error: `Error al actualizar cliente después de registrar pago: ${updateResult.error}` };
   }
 
@@ -342,7 +346,7 @@ export async function sendPaymentReminderEmailAction(client: Client) {
         <ul>
           <li>Valor del Contrato: ${formatCurrency(client.contractValue)} ${client.applyIva === false ? "(Exento de IVA)" : ""}</li>
           ${client.applyIva !== false && client.ivaAmount ? `<li>IVA (${(client.ivaRate || 0) * 100}%): ${formatCurrency(client.ivaAmount)}</li>` : ""}
-          ${client.applyIva !== false && client.totalWithIva ? `<li>Total ${client.applyIva === false ? 'Contrato' : 'con IVA'}: ${formatCurrency(client.totalWithIva)}</li>` : ""}
+          ${client.totalWithIva ? `<li>Total ${client.applyIva === false ? 'Contrato' : 'con IVA'}: ${formatCurrency(client.totalWithIva)}</li>` : ""}
           ${client.downPaymentPercentage && client.downPayment ? `<li>Abono (${client.downPaymentPercentage}%): ${formatCurrency(client.downPayment)}</li>` : ''}
           <li>Plan: ${financingOptionsFromDb[client.financingPlan]?.label || (client.financingPlan === 0 ? 'Sin financiación (Pago único/recurrente directo)' : `${client.financingPlan} meses`)}</li>
           ${client.paymentAmount > 0 ? `<li>Cuota Mensual: ${formatCurrency(client.paymentAmount)}</li>` : '<li>(Pago completado o monto cero)</li>'}
@@ -387,3 +391,259 @@ export async function sendPaymentReminderEmailAction(client: Client) {
     return { success: false, error: errorMessage };
   }
 }
+
+export async function submitClientPaymentAction(formData: FormData) {
+  'use server';
+  
+  const clientId = formData.get('clientId') as string;
+  const paymentDate = formData.get('paymentDate') as string;
+  const amountPaid = parseFloat(formData.get('amountPaid') as string);
+  const notes = formData.get('notes') as string;
+  const proofFile = formData.get('proofFile') as File;
+
+  if (!clientId || !paymentDate || !amountPaid || !proofFile) {
+    return { success: false, error: "Faltan campos requeridos" };
+  }
+
+  try {
+    // Verificar que el cliente existe
+    const client = await store.getClientById(clientId);
+    if (!client) {
+      return { success: false, error: "Cliente no encontrado" };
+    }
+
+    // ✅ Convertir File a una estructura que se pueda pasar al cliente
+    const fileBuffer = await proofFile.arrayBuffer();
+    const fileData = {
+      buffer: Array.from(new Uint8Array(fileBuffer)),
+      name: proofFile.name,
+      type: proofFile.type,
+      size: proofFile.size
+    };
+
+    // ✅ Crear el registro de pago PENDIENTE - NO VALIDADO
+    const paymentRecord: Omit<PaymentRecord, 'id' | 'recordedAt'> = {
+      paymentDate: paymentDate,
+      amountPaid: amountPaid,
+      notes: notes || undefined,
+      status: 'pending', // ✅ IMPORTANTE: Estado pendiente
+      proofUrl: '', // Se actualizará después de la subida
+      proofFileName: proofFile.name,
+      submittedBy: 'client', // ✅ Identificar que fue enviado por el cliente
+      clientId: clientId,
+    };
+
+    // ✅ SOLO agregar al historial - NO actualizar el cliente aún
+    const historyResult = await store.addPaymentToHistory(clientId, paymentRecord);
+    if (historyResult.error) {
+      return { success: false, error: `Error al guardar en historial: ${historyResult.error}` };
+    }
+
+    // ✅ NO actualizar cliente aquí - eso lo hace validatePaymentAction
+    revalidatePath('/client-dashboard');
+    revalidatePath('/dashboard/payments');
+    
+    return { 
+      success: true, 
+      message: "Pago registrado. Subiendo comprobante...",
+      paymentId: historyResult.record?.id,
+      clientId: clientId,
+      fileData: fileData
+    };
+  } catch (error) {
+    console.error('Error submitting client payment:', error);
+    
+    if (error instanceof Error) {
+      if (error.message.includes('archivo')) {
+        return { success: false, error: error.message };
+      }
+    }
+    
+    return { success: false, error: "Error al enviar el pago. Inténtelo de nuevo." };
+  }
+}
+
+// ✅ Nueva función para actualizar el pago con la URL del comprobante
+export async function updatePaymentWithProofUrl(paymentId: string, clientId: string, proofUrl: string) {
+  'use server';
+  
+  try {
+    const updates: Partial<PaymentRecord> = {
+      proofUrl: proofUrl,
+    };
+
+    const updateResult = await store.updatePaymentRecord(clientId, paymentId, updates);
+    if (updateResult.error) {
+      return { success: false, error: `Error al actualizar comprobante: ${updateResult.error}` };
+    }
+
+    // Obtener cliente y enviar notificación al admin
+    const client = await store.getClientById(clientId);
+    if (client) {
+      const paymentHistory = await store.getPaymentHistory(clientId);
+      const payment = paymentHistory.find(p => p.id === paymentId);
+      if (payment) {
+        await sendPaymentSubmissionNotification(client, payment.amountPaid, proofUrl);
+      }
+    }
+
+    revalidatePath('/client-dashboard');
+    revalidatePath('/dashboard/payments');
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating payment with proof URL:', error);
+    return { success: false, error: "Error al actualizar el comprobante" };
+  }
+}
+
+// ✅ Mejorar notificación al admin
+async function sendPaymentSubmissionNotification(client: Client, amount: number, proofUrl: string) {
+  try {
+    const settings = await getGeneralSettings();
+    const appName = settings.appName || 'RecurPay';
+    
+    console.log(`🔔 NUEVO PAGO PENDIENTE DE VALIDACIÓN:
+    Cliente: ${client.firstName} ${client.lastName}
+    Email: ${client.email}
+    Monto: ${formatCurrency(amount)}
+    Comprobante: ${proofUrl}
+    
+    ⚠️ Requiere validación del administrador en el panel de control.`);
+    
+    // TODO: Aquí podrías implementar envío de email al admin
+    // TODO: O push notification, Slack webhook, etc.
+    
+  } catch (error) {
+    console.error('Error in admin notification:', error);
+  }
+}
+
+// ✅ Mejorar notificación al cliente
+async function sendPaymentValidationNotification(client: Client, payment: PaymentRecord, validated: boolean, rejectionReason?: string) {
+  try {
+    const settings = await getGeneralSettings();
+    const appName = settings.appName || 'RecurPay';
+    
+    if (validated) {
+      console.log(`✅ PAGO VALIDADO:
+      Cliente: ${client.firstName} ${client.lastName}
+      Email: ${client.email}
+      Monto: ${formatCurrency(payment.amountPaid)}
+      
+      El pago ha sido validado y procesado correctamente.`);
+    } else {
+      console.log(`❌ PAGO RECHAZADO:
+      Cliente: ${client.firstName} ${client.lastName}
+      Email: ${client.email}
+      Monto: ${formatCurrency(payment.amountPaid)}
+      Motivo: ${rejectionReason || 'No especificado'}
+      
+      El cliente debe ser notificado del rechazo.`);
+    }
+    
+    // TODO: Implementar envío de email al cliente
+    
+  } catch (error) {
+    console.error('Error in client notification:', error);
+  }
+}
+
+export async function validatePaymentAction(paymentId: string, clientId: string, action: 'validate' | 'reject', rejectionReason?: string) {
+  'use server';
+  
+  try {
+    // Obtener el pago pendiente
+    const paymentHistory = await store.getPaymentHistory(clientId);
+    const payment = paymentHistory.find(p => p.id === paymentId);
+    
+    if (!payment) {
+      return { success: false, error: "Pago no encontrado" };
+    }
+
+    if (payment.status !== 'pending') {
+      return { success: false, error: "Este pago ya ha sido procesado" };
+    }
+
+    // Actualizar el estado del pago
+    const updatedPayment: Partial<PaymentRecord> = {
+      status: action === 'validate' ? 'validated' : 'rejected',
+      validatedAt: new Date().toISOString(),
+      validatedBy: 'admin', // TODO: Usar el ID del admin autenticado
+    };
+
+    if (action === 'reject' && rejectionReason) {
+      updatedPayment.rejectionReason = rejectionReason;
+    }
+
+    // ✅ SOLO si se valida el pago, actualizar el cliente (avanzar fecha de pago, etc.)
+    if (action === 'validate') {
+      const client = await store.getClientById(clientId);
+      if (!client) {
+        return { success: false, error: "Cliente no encontrado" };
+      }
+
+      // Lógica similar a registerPaymentAction pero sin crear nuevo historial
+      let newPaymentsMadeCount = (client.paymentsMadeCount || 0) + 1;
+      let newNextPaymentDate = parseISO(client.nextPaymentDate);
+      
+      const updates: Partial<Client> = {
+        paymentsMadeCount: newPaymentsMadeCount,
+      };
+
+      // Verificar si es un contrato pequeño (< 1M)
+      const CONTRACT_VALUE_THRESHOLD = 1000000;
+      if (client.contractValue && client.contractValue < CONTRACT_VALUE_THRESHOLD) {
+        updates.status = 'completed';
+        updates.paymentAmount = 0; 
+      } else {
+        // Avanzar fecha de pago un mes
+        newNextPaymentDate = addMonths(newNextPaymentDate, 1);
+        const targetDay = client.paymentDayOfMonth;
+        const daysInNewMonth = getDaysInMonth(newNextPaymentDate);
+        newNextPaymentDate = setDate(newNextPaymentDate, Math.min(targetDay, daysInNewMonth));
+        updates.nextPaymentDate = newNextPaymentDate.toISOString();
+
+        // Verificar si completó el plan de financiación
+        const financingOptionsFromDb = await getFinancingOptionsMap();
+        if (client.financingPlan && client.financingPlan > 0 && financingOptionsFromDb[client.financingPlan] && newPaymentsMadeCount >= client.financingPlan) {
+          updates.paymentAmount = 0; 
+          updates.status = 'completed';
+        }
+      }
+
+      const updateResult = await store.updateClient(clientId, updates);
+      if (updateResult.error) {
+        return { success: false, error: `Error al actualizar cliente: ${updateResult.error}` };
+      }
+    }
+
+    // Actualizar el registro de pago
+    const updatePaymentResult = await store.updatePaymentRecord(clientId, paymentId, updatedPayment);
+    if (updatePaymentResult.error) {
+      return { success: false, error: `Error al actualizar pago: ${updatePaymentResult.error}` };
+    }
+
+    // Enviar notificación al cliente
+    try {
+      const client = await store.getClientById(clientId);
+      if (client) {
+        await sendPaymentValidationNotification(client, payment, action === 'validate', rejectionReason);
+      }
+    } catch (error) {
+      console.error('Error sending client notification:', error);
+    }
+
+    revalidatePath('/dashboard/payments');
+    revalidatePath('/client-dashboard');
+    
+    return { 
+      success: true, 
+      message: action === 'validate' ? "Pago validado correctamente" : "Pago rechazado" 
+    };
+  } catch (error) {
+    console.error('Error validating payment:', error);
+    return { success: false, error: "Error al procesar la validación" };
+  }
+}
+

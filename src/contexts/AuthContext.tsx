@@ -19,9 +19,11 @@ interface AuthContextType {
   loading: boolean;
   initialLoadComplete: boolean;
   authError: string | null;
-  setAuthError: (error: string | null) => void; // Asegúrate de que esto esté incluido
+  setAuthError: (error: string | null) => void;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  // ✅ Mantener esta función aunque no la usemos en el server action
+  getAuthToken: () => Promise<string | null>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -47,6 +49,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [authError, setAuthError] = useState<string | null>(null);
   const router = useRouter();
   const pathname = usePathname();
+
+  // ✅ Función para obtener el token de autenticación
+  const getAuthToken = async (): Promise<string | null> => {
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        console.warn('No hay usuario autenticado para obtener token');
+        return null;
+      }
+      
+      const token = await currentUser.getIdToken();
+      return token;
+    } catch (error) {
+      console.error('Error al obtener token de autenticación:', error);
+      return null;
+    }
+  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -160,22 +179,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const value = {
+    user,
+    client,
+    isAdmin,
+    isClient,
+    userRole,
+    loading,
+    initialLoadComplete,
+    authError,
+    setAuthError,
+    login,
+    logout,
+    getAuthToken, // ✅ Incluir la función
+  };
+
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        client,
-        isAdmin,
-        isClient,
-        userRole,
-        loading,
-        initialLoadComplete,
-        authError,
-        setAuthError, // Asegúrate de incluir esto en el value
-        login,
-        logout,
-      }}
-    >
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );

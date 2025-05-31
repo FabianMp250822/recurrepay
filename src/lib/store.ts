@@ -206,18 +206,39 @@ export async function addPaymentToHistory(clientId: string, paymentData: Omit<Pa
   }
   try {
     const historyCollectionRef = collection(db, CLIENTS_COLLECTION, clientId, PAYMENT_HISTORY_SUBCOLLECTION);
-    const dataToSave: Partial<Omit<PaymentRecord, 'id'>> = { // Use Partial to allow siigoInvoiceUrl to be undefined
+    
+    // ✅ Usar todos los datos que vienen del paymentData sin modificar status
+    const dataToSave: Partial<Omit<PaymentRecord, 'id'>> = {
       paymentDate: paymentData.paymentDate,
       amountPaid: paymentData.amountPaid,
       recordedAt: Timestamp.now().toDate().toISOString(),
+      // ✅ Incluir todos los campos nuevos
+      status: paymentData.status || 'pending', // ✅ Respetar el status que viene
+      submittedBy: paymentData.submittedBy || 'admin',
+      proofUrl: paymentData.proofUrl,
+      proofFileName: paymentData.proofFileName,
+      clientId: paymentData.clientId,
+      notes: paymentData.notes,
     };
+
+    // Solo agregar campos opcionales si existen
     if (paymentData.siigoInvoiceUrl) {
       dataToSave.siigoInvoiceUrl = paymentData.siigoInvoiceUrl;
     }
+    if (paymentData.validatedAt) {
+      dataToSave.validatedAt = paymentData.validatedAt;
+    }
+    if (paymentData.validatedBy) {
+      dataToSave.validatedBy = paymentData.validatedBy;
+    }
+    if (paymentData.rejectionReason) {
+      dataToSave.rejectionReason = paymentData.rejectionReason;
+    }
+
     const docRef = await addDoc(historyCollectionRef, dataToSave);
     return { record: { id: docRef.id, ...dataToSave } as PaymentRecord };
   } catch (error: any) {
-    console.error(`Error adding payment to history for client ${clientId} (Client SDK):`, JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    console.error(`Error adding payment to history for client ${clientId}:`, error);
     let userMessage = "Error al registrar el pago en el historial.";
     if (error.code === 'permission-denied') {
       userMessage = "Permiso denegado por Firestore al registrar el pago en el historial. Verifique las reglas de seguridad.";
@@ -250,6 +271,59 @@ export async function getPaymentHistory(clientId: string): Promise<PaymentRecord
   }
 }
 
+export async function updatePaymentRecord(clientId: string, paymentId: string, updates: Partial<PaymentRecord>): Promise<{ success?: boolean, error?: string }> {
+  if (!db) {
+    console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in updatePaymentRecord.");
+    return { error: "Error de la aplicación: La conexión con la base de datos no está inicializada." };
+  }
+  
+  try {
+    const paymentDocRef = doc(db, CLIENTS_COLLECTION, clientId, PAYMENT_HISTORY_SUBCOLLECTION, paymentId);
+    await updateDoc(paymentDocRef, updates);
+    return { success: true };
+  } catch (error: any) {
+    console.error(`Error updating payment record ${paymentId} for client ${clientId}:`, error);
+    return { error: `Error al actualizar el registro de pago: ${error.message}` };
+  }
+}
+
+export async function getPendingPayments(): Promise<(PaymentRecord & { clientName: string; clientEmail: string })[]> {
+  if (!db) {
+    console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in getPendingPayments.");
+    return [];
+  }
+  
+  try {
+    const clients = await getClients();
+    const allPendingPayments: (PaymentRecord & { clientName: string; clientEmail: string })[] = [];
+    
+    for (const client of clients) {
+      try {
+        const paymentHistory = await getPaymentHistory(client.id);
+        const pendingPayments = paymentHistory
+          .filter(payment => payment.status === 'pending') // ✅ Solo pendientes
+          .map(payment => ({
+            ...payment,
+            clientName: `${client.firstName} ${client.lastName}`,
+            clientEmail: client.email,
+            clientId: client.id
+          }));
+        
+        allPendingPayments.push(...pendingPayments);
+      } catch (error) {
+        console.error(`Error loading pending payments for client ${client.id}:`, error);
+      }
+    }
+    
+    // Ordenar por fecha de envío (más recientes primero)
+    return allPendingPayments.sort((a, b) => 
+      new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime()
+    );
+  } catch (error: any) {
+    console.error('Error fetching pending payments:', error);
+    return [];
+  }
+}
 
 // --- App Settings Operations ---
 
@@ -354,7 +428,6 @@ export async function getFinancingOptionsMap(): Promise<{ [key: number]: { rate:
       return acc;
     }, {} as { [key: number]: { rate: number; label: string } });
 }
-
 
 // --- General App Settings Operations ---
 const defaultGeneralSettings: AppGeneralSettings = {

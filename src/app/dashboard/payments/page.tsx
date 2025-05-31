@@ -8,13 +8,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { CreditCard, Search, Filter, Download, Calendar, DollarSign } from 'lucide-react';
+import { CreditCard, Search, Filter, Download, Calendar, DollarSign, CheckCircle, Clock, XCircle, Eye } from 'lucide-react';
 import { formatCurrency, formatDate, getDaysUntilDue } from '@/lib/utils';
-import { getClients, getPaymentHistory } from '@/lib/store';
+import { getClients, getPaymentHistory, getPendingPayments } from '@/lib/store';
 import AppLayout from '@/components/layout/app-layout';
 import type { Client, PaymentRecord as BasePaymentRecord } from '@/types';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Loader2 } from 'lucide-react';
+import PendingPaymentsPanel from '@/components/admin/PendingPaymentsPanel';
 
 // Extended PaymentRecord type with client information
 type PaymentRecord = BasePaymentRecord & {
@@ -28,21 +29,12 @@ export default function PaymentsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [allPayments, setAllPayments] = useState<PaymentRecord[]>([]);
   const [filteredPayments, setFilteredPayments] = useState<PaymentRecord[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('todos');
-  const [monthFilter, setMonthFilter] = useState('todos');
+  const [pendingPayments, setPendingPayments] = useState<(PaymentRecord & { clientName: string; clientEmail: string })[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (initialLoadComplete && isAdmin) {
-      loadPaymentsData();
-    }
-  }, [initialLoadComplete, isAdmin]);
-
-  useEffect(() => {
-    filterPayments();
-  }, [allPayments, searchTerm, statusFilter, monthFilter]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('validated'); // ✅ Por defecto solo validados
+  const [monthFilter, setMonthFilter] = useState('todos');
 
   const loadPaymentsData = async () => {
     try {
@@ -51,6 +43,12 @@ export default function PaymentsPage() {
       
       const clientsData = await getClients();
       setClients(clientsData);
+
+      // ✅ Cargar pagos pendientes PRIMERO
+      console.log('🔍 Cargando pagos pendientes...');
+      const pendingPaymentsData = await getPendingPayments();
+      console.log('📋 Pagos pendientes encontrados:', pendingPaymentsData.length);
+      setPendingPayments(pendingPaymentsData);
 
       // Cargar historial de pagos para todos los clientes
       const allPaymentsData: PaymentRecord[] = [];
@@ -73,6 +71,7 @@ export default function PaymentsPage() {
       // Ordenar por fecha de registro (más recientes primero)
       allPaymentsData.sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime());
       setAllPayments(allPaymentsData);
+      console.log('💳 Total de pagos cargados:', allPaymentsData.length);
     } catch (error) {
       console.error('Error loading payments data:', error);
       setError('Error al cargar los datos de pagos');
@@ -81,8 +80,26 @@ export default function PaymentsPage() {
     }
   };
 
+  useEffect(() => {
+    if (initialLoadComplete && isAdmin) {
+      loadPaymentsData();
+    }
+  }, [initialLoadComplete, isAdmin]);
+
+  useEffect(() => {
+    filterPayments();
+  }, [allPayments, searchTerm, statusFilter, monthFilter]);
+
   const filterPayments = () => {
     let filtered = [...allPayments];
+
+    // ✅ Filtrar por estado PRIMERO
+    if (statusFilter !== 'todos') {
+      filtered = filtered.filter(payment => {
+        const paymentStatus = payment.status || 'validated'; // Si no tiene status, asumimos que es validado (pagos antiguos)
+        return paymentStatus === statusFilter;
+      });
+    }
 
     // Filtrar por búsqueda
     if (searchTerm) {
@@ -105,23 +122,75 @@ export default function PaymentsPage() {
     setFilteredPayments(filtered);
   };
 
+  // ✅ Solo contar pagos VALIDADOS para los totales
   const getTotalAmount = () => {
-    return filteredPayments.reduce((sum, payment) => sum + payment.amountPaid, 0);
+    return filteredPayments
+      .filter(payment => (payment.status || 'validated') === 'validated')
+      .reduce((sum, payment) => sum + payment.amountPaid, 0);
   };
 
+  // ✅ Solo pagos VALIDADOS para estadísticas por mes
   const getPaymentsByMonth = () => {
     const currentYear = new Date().getFullYear();
     const monthlyData: { [key: number]: number } = {};
     
-    allPayments.forEach(payment => {
-      const paymentDate = new Date(payment.paymentDate);
-      if (paymentDate.getFullYear() === currentYear) {
-        const month = paymentDate.getMonth();
-        monthlyData[month] = (monthlyData[month] || 0) + payment.amountPaid;
-      }
-    });
+    allPayments
+      .filter(payment => (payment.status || 'validated') === 'validated') // Solo validados
+      .forEach(payment => {
+        const paymentDate = new Date(payment.paymentDate);
+        if (paymentDate.getFullYear() === currentYear) {
+          const month = paymentDate.getMonth();
+          monthlyData[month] = (monthlyData[month] || 0) + payment.amountPaid;
+        }
+      });
 
     return monthlyData;
+  };
+
+  // ✅ Obtener conteos por estado
+  const getPaymentCounts = () => {
+    const counts = {
+      validated: 0,
+      pending: 0,
+      rejected: 0,
+      total: 0
+    };
+
+    allPayments.forEach(payment => {
+      const status = payment.status || 'validated';
+      counts[status as keyof typeof counts]++;
+      counts.total++;
+    });
+
+    return counts;
+  };
+
+  // ✅ Función para obtener el ícono del estado
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'validated':
+        return <CheckCircle className="h-4 w-4 text-green-600" />;
+      case 'pending':
+        return <Clock className="h-4 w-4 text-yellow-600" />;
+      case 'rejected':
+        return <XCircle className="h-4 w-4 text-red-600" />;
+      default:
+        return <CheckCircle className="h-4 w-4 text-green-600" />;
+    }
+  };
+
+  // ✅ Función para obtener el badge del estado
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'validated':
+        return <Badge variant="default">Validado</Badge>;
+      case 'pending':
+        return <Badge variant="secondary">Pendiente</Badge>;
+      case 'rejected':
+        return <Badge variant="destructive">Rechazado</Badge>;
+      default:
+        return <Badge variant="default">Validado</Badge>;
+    }
   };
 
   if (!initialLoadComplete) {
@@ -171,6 +240,7 @@ export default function PaymentsPage() {
   }
 
   const monthlyData = getPaymentsByMonth();
+  const paymentCounts = getPaymentCounts();
 
   return (
     <AppLayout>
@@ -180,27 +250,74 @@ export default function PaymentsPage() {
           <CreditCard className="h-8 w-8 text-green-600" />
           <h1 className="text-3xl font-bold text-gray-900">Gestión de Pagos</h1>
         </div>
-        <p className="text-gray-600">Administre y visualice todos los pagos registrados en el sistema.</p>
+        <p className="text-gray-600">Administre y valide todos los pagos del sistema.</p>
       </div>
 
-      {/* Estadísticas rápidas */}
-      <div className="grid gap-4 md:grid-cols-3 mb-6">
+      {/* ✅ Panel de pagos pendientes - PRIMERA PRIORIDAD */}
+      <div className="mb-6">
+        <PendingPaymentsPanel pendingPayments={pendingPayments} />
+      </div>
+
+      {/* ✅ Estadísticas por estado */}
+      <div className="grid gap-4 md:grid-cols-4 mb-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Pagos Filtrados</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Pagos Validados</CardTitle>
+            <CheckCircle className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(getTotalAmount())}</div>
+            <div className="text-2xl font-bold text-green-600">{paymentCounts.validated}</div>
             <p className="text-xs text-muted-foreground">
-              {filteredPayments.length} pagos registrados
+              Total: {formatCurrency(getTotalAmount())}
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Pagos Este Mes</CardTitle>
+            <CardTitle className="text-sm font-medium">Pendientes</CardTitle>
+            <Clock className="h-4 w-4 text-yellow-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-yellow-600">{paymentCounts.pending}</div>
+            <p className="text-xs text-muted-foreground">
+              Requieren validación
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Rechazados</CardTitle>
+            <XCircle className="h-4 w-4 text-red-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-red-600">{paymentCounts.rejected}</div>
+            <p className="text-xs text-muted-foreground">
+              No válidos para conteo
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Registros</CardTitle>
+            <DollarSign className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{paymentCounts.total}</div>
+            <p className="text-xs text-muted-foreground">
+              Todos los estados
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* ✅ Estadísticas de ingresos (solo validados) */}
+      <div className="grid gap-4 md:grid-cols-2 mb-6">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Ingresos Este Mes</CardTitle>
             <Calendar className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -208,20 +325,20 @@ export default function PaymentsPage() {
               {formatCurrency(monthlyData[new Date().getMonth()] || 0)}
             </div>
             <p className="text-xs text-muted-foreground">
-              Mes actual
+              Solo pagos validados
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Promedio por Pago</CardTitle>
+            <CardTitle className="text-sm font-medium">Promedio por Pago Validado</CardTitle>
             <CreditCard className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {filteredPayments.length > 0 
-                ? formatCurrency(getTotalAmount() / filteredPayments.length)
+              {paymentCounts.validated > 0 
+                ? formatCurrency(getTotalAmount() / paymentCounts.validated)
                 : formatCurrency(0)
               }
             </div>
@@ -232,7 +349,7 @@ export default function PaymentsPage() {
         </Card>
       </div>
 
-      {/* Filtros y búsqueda */}
+      {/* ✅ Filtros y búsqueda */}
       <Card className="mb-6">
         <CardHeader>
           <CardTitle>Filtros de Búsqueda</CardTitle>
@@ -248,6 +365,19 @@ export default function PaymentsPage() {
                 className="pl-10"
               />
             </div>
+            
+            {/* ✅ Filtro por estado */}
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-full md:w-48">
+                <SelectValue placeholder="Filtrar por estado" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos los estados</SelectItem>
+                <SelectItem value="validated">✅ Validados</SelectItem>
+                <SelectItem value="pending">⏳ Pendientes</SelectItem>
+                <SelectItem value="rejected">❌ Rechazados</SelectItem>
+              </SelectContent>
+            </Select>
             
             <Select value={monthFilter} onValueChange={setMonthFilter}>
               <SelectTrigger className="w-full md:w-48">
@@ -269,7 +399,7 @@ export default function PaymentsPage() {
                 <SelectItem value="11">Diciembre</SelectItem>
               </SelectContent>
             </Select>
-
+            
             <Button variant="outline">
               <Download className="h-4 w-4 mr-2" />
               Exportar
@@ -278,63 +408,104 @@ export default function PaymentsPage() {
         </CardContent>
       </Card>
 
-      {/* Tabla de pagos */}
+      {/* ✅ Tabla de pagos con estados */}
       <Card>
         <CardHeader>
           <CardTitle>Historial de Pagos</CardTitle>
           <CardDescription>
-            Lista completa de todos los pagos registrados
+            {statusFilter === 'todos' 
+              ? 'Lista completa de todos los pagos registrados'
+              : statusFilter === 'validated'
+              ? 'Pagos validados y contabilizados como ingresos'
+              : statusFilter === 'pending'
+              ? 'Pagos pendientes de validación'
+              : 'Pagos rechazados (no contabilizados como ingresos)'
+            }
           </CardDescription>
         </CardHeader>
         <CardContent>
           {filteredPayments.length === 0 ? (
             <div className="text-center py-8">
               <CreditCard className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-500">No se encontraron pagos con los filtros aplicados</p>
+              <p className="text-gray-500">
+                {statusFilter === 'todos' 
+                  ? 'No se encontraron pagos con los filtros aplicados'
+                  : statusFilter === 'validated'
+                  ? 'No hay pagos validados con los filtros aplicados'
+                  : statusFilter === 'pending'
+                  ? 'No hay pagos pendientes de validación'
+                  : 'No hay pagos rechazados con los filtros aplicados'
+                }
+              </p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead>Estado</TableHead>
                     <TableHead>Cliente</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>Monto Pagado</TableHead>
                     <TableHead>Fecha de Pago</TableHead>
                     <TableHead>Registrado el</TableHead>
+                    <TableHead>Comprobante</TableHead>
                     <TableHead>Factura</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredPayments.map((payment, index) => (
-                    <TableRow key={payment.id || index}>
-                      <TableCell className="font-medium">
-                        {payment.clientName || 'N/A'}
-                      </TableCell>
-                      <TableCell>{payment.clientEmail || 'N/A'}</TableCell>
-                      <TableCell className="font-semibold">
-                        {formatCurrency(payment.amountPaid)}
-                      </TableCell>
-                      <TableCell>{formatDate(payment.paymentDate)}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {formatDate(payment.recordedAt)}
-                      </TableCell>
-                      <TableCell>
-                        {payment.siigoInvoiceUrl ? (
-                          <a
-                            href={payment.siigoInvoiceUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-primary hover:underline text-sm"
-                          >
-                            Ver Factura →
-                          </a>
-                        ) : (
-                          <span className="text-muted-foreground text-sm">Sin factura</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {filteredPayments.map((payment, index) => {
+                    const paymentStatus = payment.status || 'validated';
+                    return (
+                      <TableRow key={payment.id || index}>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            {getStatusIcon(paymentStatus)}
+                            {getStatusBadge(paymentStatus)}
+                          </div>
+                        </TableCell>
+                        <TableCell className="font-medium">
+                          {payment.clientName || 'N/A'}
+                        </TableCell>
+                        <TableCell>{payment.clientEmail || 'N/A'}</TableCell>
+                        <TableCell className="font-semibold">
+                          {formatCurrency(payment.amountPaid)}
+                        </TableCell>
+                        <TableCell>{formatDate(payment.paymentDate)}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {formatDate(payment.recordedAt)}
+                        </TableCell>
+                        <TableCell>
+                          {payment.proofUrl ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => window.open(payment.proofUrl, '_blank')}
+                            >
+                              <Eye className="h-4 w-4 mr-1" />
+                              Ver
+                            </Button>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">Sin comprobante</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {payment.siigoInvoiceUrl ? (
+                            <a
+                              href={payment.siigoInvoiceUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary hover:underline text-sm"
+                            >
+                              Ver Factura →
+                            </a>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">Sin factura</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>

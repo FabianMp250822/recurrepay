@@ -1,4 +1,3 @@
-
 import type { User as FirebaseUser } from 'firebase/auth';
 import type { z } from 'zod';
 import type { publicClientSchema } from '@/lib/schema';
@@ -12,6 +11,18 @@ export interface PaymentRecord {
   paymentMethod?: string; // Optional: Method used for this specific payment
   notes?: string; // Optional: Any notes for this specific payment
   siigoInvoiceUrl?: string; // Optional: Link to the Siigo e-invoice
+  
+  // ✅ Campos para el sistema de validación
+  status: 'pending' | 'validated' | 'rejected'; // Estado del pago
+  proofUrl?: string; // URL del comprobante subido por el cliente
+  proofFileName?: string; // Nombre del archivo del comprobante
+  submittedBy: 'client' | 'admin'; // Quien registró el pago
+  clientId?: string; // ID del cliente (para pagos subidos por clientes)
+  
+  // ✅ Campos para validación por admin
+  validatedAt?: string; // Fecha de validación por el admin
+  validatedBy?: string; // ID del admin que validó
+  rejectionReason?: string; // Razón de rechazo si aplica
 }
 
 export interface Client {
