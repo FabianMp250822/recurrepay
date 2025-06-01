@@ -1,3 +1,4 @@
+
 'use client';
 
 import React from 'react';
@@ -7,7 +8,7 @@ import { AppSidebar } from './sidebar';
 import { AppHeader } from './header';
 import { Loader2 } from 'lucide-react';
 
-const PUBLIC_PATHS = ['/login', '/inscribir'];
+const PUBLIC_PATHS = ['/', '/login', '/inscribir']; // Added '/'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, userRole, loading, initialLoadComplete } = useAuth();

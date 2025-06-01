@@ -1,3 +1,4 @@
+
 'use client';
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
@@ -28,7 +29,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const PUBLIC_PATHS = ['/login', '/inscribir'];
+const PUBLIC_PATHS = ['/', '/login', '/inscribir']; // Added '/'
 
 export function useAuth() {
   const context = useContext(AuthContext);
@@ -84,8 +85,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setUserRole('admin');
             setClient(null);
             
-            // Redirigir a dashboard si está en página pública
-            if (PUBLIC_PATHS.includes(pathname)) {
+            // Redirigir a dashboard si está en página pública (login, inscribir).
+            // No redirigir desde '/' si ya está autenticado como admin, la landing page tiene un botón "Ir al Panel"
+            if (pathname === '/login' || pathname === '/inscribir') {
               router.replace('/dashboard');
             }
           } else {
@@ -99,8 +101,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               setUserRole('client');
               setClient(clientData);
               
-              // Redirigir a panel de cliente si está en página pública
-              if (PUBLIC_PATHS.includes(pathname)) {
+              // Redirigir a panel de cliente si está en página pública (login, inscribir).
+              // No redirigir desde '/' si ya está autenticado como cliente.
+              if (pathname === '/login' || pathname === '/inscribir') {
                 router.replace('/client-dashboard');
               }
             } else {
@@ -110,9 +113,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               setUserRole(null);
               setClient(null);
               
-              // Redirigir a completar perfil si no está en página pública
-              if (!PUBLIC_PATHS.includes(pathname)) {
-                router.replace('/inscribir');
+              // Redirigir a completar perfil si no está en página pública (incluyendo '/')
+              // o si está en la landing pero sin perfil.
+              if (!PUBLIC_PATHS.includes(pathname) || pathname === '/') {
+                 // Permitir que el flujo de /inscribir continúe si ya está autenticado pero sin perfil.
+                if (pathname !== '/inscribir') {
+                    router.replace('/inscribir');
+                }
               }
             }
           }
@@ -173,7 +180,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setIsClient(false);
       setUserRole(null);
       setAuthError(null);
-      router.replace('/login');
+      router.replace('/login'); // Redirige a /login al cerrar sesión
     } catch (error: any) {
       setAuthError(error.message || 'Error al cerrar sesión');
     }
