@@ -29,6 +29,7 @@ export default function ClientDashboardPage() {
 
     setLoadingClient(true);
     try {
+      // ✅ CAMBIAR de getClientById a getClientByFirebaseId
       const clientData = await getClientByFirebaseId(user.uid);
       if (clientData) {
         setClient(clientData);

@@ -13,7 +13,8 @@ import {
   orderBy,
   where,
   Timestamp,
-  setDoc
+  setDoc,
+  serverTimestamp // ✅ AGREGAR ESTE IMPORT
 } from 'firebase/firestore';
 import { DEFAULT_FINANCING_OPTIONS } from '@/lib/constants'; // For default structure
 
@@ -90,6 +91,25 @@ export async function getClientByEmail(email: string): Promise<Client | undefine
   }
 }
 
+export async function getClientByFirebaseId(firebaseId: string): Promise<Client | undefined> {
+  try {
+    const clientsCollectionRef = collection(db, CLIENTS_COLLECTION);
+    const q = query(clientsCollectionRef, where('firebaseId', '==', firebaseId));
+    const querySnapshot = await getDocs(q);
+    
+    if (!querySnapshot.empty) {
+      const docSnap = querySnapshot.docs[0];
+      return { id: docSnap.id, ...(docSnap.data() as Omit<Client, 'id'>) };
+    }
+    return undefined;
+  } catch (error: any) {
+    console.error("Error fetching client by Firebase ID:", error);
+    if (error.code === 'permission-denied') {
+      throw new Error(`Permiso denegado al buscar cliente por Firebase ID '${firebaseId}'. Verifique las reglas de seguridad.`);
+    }
+    throw new Error(`Error al buscar cliente por Firebase ID '${firebaseId}': ${error.message || 'Error desconocido'}`);
+  }
+}
 
 export async function addClient(clientData: Omit<Client, 'id'>): Promise<{ client?: Client, error?: string }> {
   if (!db) {
@@ -426,7 +446,7 @@ export async function getFinancingOptionsMap(): Promise<{ [key: number]: { rate:
         console.warn("getFinancingOptionsMap: Skipping invalid plan object during reduce:", plan);
       }
       return acc;
-    }, {} as { [key: number]: { rate: number; label: string } });
+    }, {} as { [key: number]: { rate: number, label: string } });
 }
 
 // --- General App Settings Operations ---
@@ -570,19 +590,30 @@ export async function isEmailAdmin(email: string): Promise<boolean> {
  */
 export async function getAllTickets(): Promise<Ticket[]> {
   try {
-    const ticketsQuery = query(
-      collection(db, TICKETS_COLLECTION),
-      orderBy('createdAt', 'desc')
-    );
+    const ticketsRef = collection(db, 'tickets');
+    const q = query(ticketsRef, orderBy('createdAt', 'desc'));
+    const snapshot = await getDocs(q);
     
-    const snapshot = await getDocs(ticketsQuery);
-    return snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as Ticket));
+    return snapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        subject: data.subject,
+        description: data.description,
+        category: data.category,
+        priority: data.priority || 'media',
+        status: data.status || 'recibida',
+        clientId: data.clientId,
+        clientEmail: data.clientEmail,
+        assignedTo: data.assignedTo,
+        messages: data.messages || [],
+        createdAt: data.createdAt?.toDate?.() || new Date(data.createdAt),
+        updatedAt: data.updatedAt?.toDate?.() || new Date(data.updatedAt)
+      } as Ticket;
+    });
   } catch (error) {
-    console.error('Error fetching tickets:', error);
-    throw error;
+    console.error('Error getting all tickets:', error);
+    return [];
   }
 }
 
@@ -631,6 +662,133 @@ export async function getClientTickets(clientId: string): Promise<Ticket[]> {
 }
 
 /**
+ * Actualizar estado del ticket
+ */
+export async function updateTicketStatus(
+  ticketId: string,
+  status: TicketStatus,
+  assignedToAdmin?: string,
+  assignedToAdminName?: string
+): Promise<{ success?: boolean; error?: string }> {
+  try {
+    const ticketRef = doc(db, TICKETS_COLLECTION, ticketId);
+    const updateData: any = {
+      status,
+      updatedAt: new Date().toISOString(),
+      isAdminRead: true,
+    };
+    
+    // ✅ Solo agregar campos si tienen valores válidos
+    if (assignedToAdmin !== undefined && assignedToAdmin !== null) {
+      updateData.assignedToAdmin = assignedToAdmin;
+    }
+    if (assignedToAdminName !== undefined && assignedToAdminName !== null) {
+      updateData.assignedToAdminName = assignedToAdminName;
+    }
+    
+    // ✅ Limpiar valores undefined antes de enviar
+    Object.keys(updateData).forEach(key => {
+      if (updateData[key] === undefined || updateData[key] === null) {
+        delete updateData[key];
+      }
+    });
+    
+    await updateDoc(ticketRef, updateData);
+    return { success: true };
+  } catch (error: any) {
+    console.error('Error updating ticket status:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function addTicketResponse(
+  ticketId: string,
+  message: string,
+  sentBy: 'client' | 'admin',
+  sentByName: string,
+  sentByEmail: string,
+  attachments?: string[]
+): Promise<{ success?: boolean; error?: string }> {
+  try {
+    const ticketRef = doc(db, TICKETS_COLLECTION, ticketId);
+    const ticketDoc = await getDoc(ticketRef);
+    
+    if (!ticketDoc.exists()) {
+      return { error: 'Ticket no encontrado' };
+    }
+    
+    const ticketData = ticketDoc.data() as Ticket;
+    const now = new Date().toISOString();
+    
+    const newMessage: TicketMessage = {
+      id: crypto.randomUUID(),
+      message,
+      sentBy,
+      sentByName,
+      sentByEmail,
+      timestamp: now,
+      // ✅ Solo incluir attachments si existe y no está vacío
+      ...(attachments && attachments.length > 0 && { attachments })
+    };
+    
+    const updatedMessages = [...(ticketData.messages || []), newMessage];
+    
+    const updateData: any = {
+      messages: updatedMessages,
+      updatedAt: now,
+      isClientRead: sentBy === 'client',
+      isAdminRead: sentBy === 'admin',
+      status: sentBy === 'admin' ? 'en_proceso' : ticketData.status
+    };
+    
+    // ✅ Limpiar valores undefined
+    Object.keys(updateData).forEach(key => {
+      if (updateData[key] === undefined || updateData[key] === null) {
+        delete updateData[key];
+      }
+    });
+    
+    await updateDoc(ticketRef, updateData);
+    return { success: true };
+  } catch (error: any) {
+    console.error('Error adding ticket response:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Marcar ticket como leído
+ */
+export async function markTicketAsRead(ticketId: string, readBy: 'client' | 'admin'): Promise<{ success?: boolean; error?: string }> {
+  try {
+    const ticketRef = doc(db, TICKETS_COLLECTION, ticketId);
+    
+    const updateData: any = {
+      updatedAt: new Date().toISOString()
+    };
+    
+    if (readBy === 'client') {
+      updateData.isClientRead = true;
+    } else if (readBy === 'admin') {
+      updateData.isAdminRead = true;
+    }
+    
+    // ✅ Limpiar valores undefined
+    Object.keys(updateData).forEach(key => {
+      if (updateData[key] === undefined || updateData[key] === null) {
+        delete updateData[key];
+      }
+    });
+    
+    await updateDoc(ticketRef, updateData);
+    return { success: true };
+  } catch (error: any) {
+    console.error('Error marking ticket as read:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
  * Crear nuevo ticket
  */
 export async function createTicket(
@@ -642,14 +800,14 @@ export async function createTicket(
   try {
     const now = new Date().toISOString();
     
-    const newTicket: Omit<Ticket, 'id'> = {
+    const newTicket: any = {
       clientId,
       clientName,
       clientEmail,
       subject: ticketData.subject,
       description: ticketData.description,
       status: 'recibida',
-      priority: ticketData.priority,
+      priority: ticketData.priority || 'media',
       category: ticketData.category,
       createdAt: now,
       updatedAt: now,
@@ -665,11 +823,18 @@ export async function createTicket(
       isAdminRead: false,
     };
 
+    // ✅ Limpiar valores undefined antes de crear
+    Object.keys(newTicket).forEach(key => {
+      if (newTicket[key] === undefined || newTicket[key] === null) {
+        delete newTicket[key];
+      }
+    });
+
     const docRef = await addDoc(collection(db, TICKETS_COLLECTION), newTicket);
     const ticket = { id: docRef.id, ...newTicket };
     
     return { ticket };
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error creating ticket:', error);
     return { error: 'Error al crear el ticket' };
   }
@@ -697,127 +862,40 @@ export async function addTicketMessage(
     const ticketData = ticketDoc.data() as Ticket;
     const now = new Date().toISOString();
     
-    const newMessage: TicketMessage = {
+    const newMessage: any = {
       id: crypto.randomUUID(),
       message,
       sentBy,
       sentByName,
       sentByEmail,
       timestamp: now,
-      attachments,
     };
     
-    const updatedMessages = [...ticketData.messages, newMessage];
+    // ✅ Solo agregar attachments si existen
+    if (attachments && attachments.length > 0) {
+      newMessage.attachments = attachments;
+    }
     
-    await updateDoc(ticketRef, {
+    const updatedMessages = [...(ticketData.messages || []), newMessage];
+    
+    const updateData: any = {
       messages: updatedMessages,
       updatedAt: now,
       isClientRead: sentBy === 'client',
       isAdminRead: sentBy === 'admin',
-    });
-    
-    return { success: true };
-  } catch (error) {
-    console.error('Error adding ticket message:', error);
-    return { error: 'Error al enviar el mensaje' };
-  }
-}
-
-/**
- * Actualizar estado del ticket
- */
-export async function updateTicketStatus(
-  ticketId: string,
-  status: TicketStatus,
-  assignedToAdmin?: string,
-  assignedToAdminName?: string
-): Promise<{ success?: boolean; error?: string }> {
-  try {
-    const ticketRef = doc(db, TICKETS_COLLECTION, ticketId);
-    const updateData: any = {
-      status,
-      updatedAt: new Date().toISOString(),
-      isAdminRead: true,
     };
     
-    if (assignedToAdmin !== undefined) {
-      updateData.assignedToAdmin = assignedToAdmin;
-      updateData.assignedToAdminName = assignedToAdminName;
-    }
+    // ✅ Limpiar valores undefined
+    Object.keys(updateData).forEach(key => {
+      if (updateData[key] === undefined || updateData[key] === null) {
+        delete updateData[key];
+      }
+    });
     
     await updateDoc(ticketRef, updateData);
     return { success: true };
-  } catch (error) {
-    console.error('Error updating ticket status:', error);
-    return { error: 'Error al actualizar el estado del ticket' };
-  }
-}
-
-/**
- * Marcar ticket como leído
- */
-export async function markTicketAsRead(
-  ticketId: string,
-  readBy: 'client' | 'admin'
-): Promise<{ success?: boolean; error?: string }> {
-  try {
-    const ticketRef = doc(db, TICKETS_COLLECTION, ticketId);
-    const updateData = readBy === 'client' 
-      ? { isClientRead: true } 
-      : { isAdminRead: true };
-    
-    await updateDoc(ticketRef, updateData);
-    return { success: true };
-  } catch (error) {
-    console.error('Error marking ticket as read:', error);
-    return { error: 'Error al marcar como leído' };
-  }
-}
-
-/**
- * Obtener ticket por ID
- */
-export async function getTicketById(ticketId: string): Promise<Ticket | null> {
-  try {
-    const ticketRef = doc(db, TICKETS_COLLECTION, ticketId);
-    const ticketDoc = await getDoc(ticketRef);
-    
-    if (!ticketDoc.exists()) {
-      return null;
-    }
-    
-    return {
-      id: ticketDoc.id,
-      ...ticketDoc.data()
-    } as Ticket;
-  } catch (error) {
-    console.error('Error fetching ticket by ID:', error);
-    throw error;
-  }
-}
-
-/**
- * Obtener cliente por Firebase ID
- */
-export async function getClientByFirebaseId(firebaseId: string): Promise<Client | undefined> {
-  if (!db) {
-    console.error("CRITICAL_STORE_ERROR: Firestore client instance (db) is null in getClientByFirebaseId.");
-    return undefined;
-  }
-  try {
-    const clientsCollectionRef = collection(db, CLIENTS_COLLECTION);
-    const q = query(clientsCollectionRef, where('firebaseId', '==', firebaseId));
-    const querySnapshot = await getDocs(q);
-    if (!querySnapshot.empty) {
-      const docSnap = querySnapshot.docs[0];
-      return { id: docSnap.id, ...(docSnap.data() as Omit<Client, 'id'>) };
-    }
-    return undefined;
   } catch (error: any) {
-    console.error("Error fetching client by Firebase ID from Firestore:", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
-    if (error.code === 'permission-denied') {
-      console.error(`Permission denied when fetching client by Firebase ID '${firebaseId}'. Check Firestore security rules.`);
-    }
-    return undefined;
+    console.error('Error adding ticket message:', error);
+    return { error: 'Error al enviar el mensaje' };
   }
 }

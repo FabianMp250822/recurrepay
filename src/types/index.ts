@@ -45,6 +45,7 @@ export interface Client {
   lastName: string;
   email: string;
   phoneNumber: string;
+  firebaseId?: string; // ✅ Asegurarse de que este campo existe
 
   contractValue?: number;
   applyIva?: boolean; 

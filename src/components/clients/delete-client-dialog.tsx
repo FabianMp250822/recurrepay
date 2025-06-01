@@ -1,7 +1,7 @@
-
 'use client';
 
 import React from 'react';
+import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,21 +13,18 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { Button } from '@/components/ui/button';
-import { Trash2, Loader2 } from 'lucide-react';
+import { Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { deleteClientAction } from '@/app/actions/clientActions';
-import { useRouter } from 'next/navigation';
 
-
-type DeleteClientDialogProps = {
+interface DeleteClientDialogProps {
   clientId: string;
   clientName: string;
-};
+  onClientDelete?: (clientId: string) => void; // ✅ NUEVO callback
+}
 
-export default function DeleteClientDialog({ clientId, clientName }: DeleteClientDialogProps) {
+export default function DeleteClientDialog({ clientId, clientName, onClientDelete }: DeleteClientDialogProps) {
   const { toast } = useToast();
-  const router = useRouter();
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [isOpen, setIsOpen] = React.useState(false);
 
@@ -40,8 +37,13 @@ export default function DeleteClientDialog({ clientId, clientName }: DeleteClien
           title: 'Cliente Eliminado',
           description: `El cliente "${clientName}" ha sido eliminado exitosamente.`,
         });
-        router.refresh(); 
-        setIsOpen(false); 
+
+        // ✅ ACTUALIZACIÓN OPTIMISTA: Llamar callback para actualizar la lista
+        if (onClientDelete) {
+          onClientDelete(clientId);
+        }
+
+        setIsOpen(false);
       } else {
         toast({
           title: 'Error',
@@ -77,9 +79,19 @@ export default function DeleteClientDialog({ clientId, clientName }: DeleteClien
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isDeleting}>Cancelar</AlertDialogCancel>
-          <AlertDialogAction onClick={handleDelete} disabled={isDeleting} className="bg-destructive hover:bg-destructive/90">
-            {isDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Eliminar
+          <AlertDialogAction
+            onClick={handleDelete}
+            disabled={isDeleting}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          >
+            {isDeleting ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                Eliminando...
+              </>
+            ) : (
+              'Eliminar Cliente'
+            )}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

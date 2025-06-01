@@ -1,4 +1,3 @@
-
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -35,7 +34,9 @@ import { formatCurrency } from '@/lib/utils';
 
 type ClientFormProps = {
   client?: Client;
-  isEditMode: boolean;
+  isEditMode?: boolean;
+  isModal?: boolean; // ✅ NUEVO
+  onClientUpdated?: (client: Client) => void; // ✅ NUEVO callback
 };
 
 type FinancingOptionsMapType = { [key: number]: { rate: number; label: string } };
@@ -72,7 +73,12 @@ const initialFileUploadState: FileUploadState = {
 const CONTRACT_VALUE_THRESHOLD = 1000000;
 const MIN_DOWN_PAYMENT_PERCENTAGE_LARGE_CONTRACT = 20;
 
-export function ClientForm({ client, isEditMode }: ClientFormProps) {
+export default function ClientForm({ 
+  client, 
+  isEditMode = false, 
+  isModal = false,
+  onClientUpdated 
+}: ClientFormProps) {
   const router = useRouter();
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = React.useState(false);
@@ -332,30 +338,40 @@ export function ClientForm({ client, isEditMode }: ClientFormProps) {
       let result;
       if (isEditMode && client) {
         result = await updateClientAction(client.id, dataToSubmit as any);
-      } else {
-        result = await createClientAction(dataToSubmit as any);
-      }
-
-      if (result.success) {
-        toast({
-          title: isEditMode ? 'Cliente Actualizado' : 'Cliente Creado',
-          description: `El cliente ${values.firstName} ${values.lastName} ha sido ${isEditMode ? 'actualizado' : 'creado'} exitosamente.`,
-        });
-        router.push('/clients');
-        router.refresh();
-      } else {
-        if (result.errors) {
-          Object.entries(result.errors).forEach(([field, messages]) => {
-             if (messages && Array.isArray(messages) && messages.length > 0) {
-                form.setError(field as keyof z.infer<typeof clientSchema>, { type: 'manual', message: messages[0] });
-             }
+        if (result.success && result.client) {
+          toast({
+            title: "Cliente actualizado",
+            description: "La información del cliente ha sido actualizada exitosamente.",
+          });
+          
+          // ✅ NUEVO: Si es modal, llamar callback en lugar de redirigir
+          if (isModal && onClientUpdated) {
+            onClientUpdated(result.client);
+          } else {
+            router.push('/clients');
+          }
+        } else {
+          toast({
+            title: "Error",
+            description: result.error || "No se pudo actualizar el cliente.",
+            variant: "destructive",
           });
         }
-        toast({
-          title: 'Error',
-          description: result.generalError || `Error al ${isEditMode ? 'actualizar' : 'crear'} el cliente. Por favor, revise los campos.`,
-          variant: 'destructive',
-        });
+      } else {
+        result = await createClientAction(dataToSubmit as any);
+        if (result.success) {
+          toast({
+            title: "Cliente creado",
+            description: "El cliente ha sido registrado exitosamente.",
+          });
+          router.push('/clients');
+        } else {
+          toast({
+            title: "Error",
+            description: result.error || "No se pudo crear el cliente.",
+            variant: "destructive",
+          });
+        }
       }
     } catch (error) {
       toast({
